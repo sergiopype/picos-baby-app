@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>sync test</title>
+<script type="module">
+import * as db from './js/db.js';
+const fid = new URLSearchParams(location.search).get('fid');
+db.connect(fid);
+window.state = { list: [], pending: new Set() };
+db.watchEntries(0, s => { window.state = s; });
+window.db = db;
+</script>

@@ -1,0 +1,598 @@
+// The whole app: setup, home screen, logging sheets, editing, contacts and settings.
+// Data lives in db.js, calculations in logic.js. This file only draws screens and reacts to taps.
+
+import * as db from './db.js';
+import * as L from './logic.js';
+
+const PEOPLE = ['Sergio', 'Ana Rita'];
+const COLORS = { Yellow: '#e8c547', Green: '#6b8e3a', Brown: '#8a5a2b', Black: '#222', Red: '#c0392b', White: '#f4f4f4' };
+const ROLES = ['Pediatrician', 'Hospital', 'Emergency', 'Nurse line', 'Pharmacy', 'Family', 'Babysitter', 'Other'];
+const WINDOW_DAYS = 7; // the live view keeps the last week; older days load on request
+
+const store = {
+  get: k => { try { return localStorage.getItem('picos.' + k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem('picos.' + k, v); } catch {} },
+};
+
+const S = {
+  fid: store.get('family'),
+  me: store.get('me'),
+  baby: null,
+  entries: [], older: [], olderFrom: null,
+  pending: new Set(),
+  contacts: [], contactsPending: new Set(),
+  view: 'home',
+  sheet: null, // { kind, ...data } while a sheet is open
+};
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const buzz = () => navigator.vibrate?.(25);
+
+// ---------- Theme ----------
+// 'light' (default), 'dark', or 'night' = dark from 8 PM to 7 AM.
+function applyTheme() {
+  const t = store.get('theme') || 'light';
+  const h = new Date().getHours(), night = h >= 20 || h < 7;
+  const dark = t === 'dark' || (t === 'night' && night);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#16131a' : '#faf7f2');
+}
+applyTheme();
+setInterval(applyTheme, 60000);
+
+// ---------- Formatting ----------
+const pad = n => String(n).padStart(2, '0');
+function dur(ms) {
+  const m = Math.max(0, Math.round(ms / L.MIN));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${pad(r)}` : `${h} h`;
+}
+function ago(t) {
+  const ms = Date.now() - t;
+  if (ms < L.MIN) return 'just now';
+  if (ms < L.DAY) return dur(ms);
+  return `${Math.floor(ms / L.DAY)} d`;
+}
+const agoLong = t => { const a = ago(t); return a === 'just now' ? a : `${a} ago`; };
+function clockTimer(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${pad(m)}:${pad(s % 60)}`;
+}
+const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function toInput(t) { const d = new Date(t); return new Date(t - d.getTimezoneOffset() * L.MIN).toISOString().slice(0, 16); }
+function fromInput(v) { return v ? new Date(v).getTime() : null; }
+function dayLabel(t) {
+  const d0 = L.startOfDay(t), today = L.startOfDay();
+  if (d0 === today) return 'Today';
+  if (d0 === L.startOfDay(today - 1)) return 'Yesterday';
+  return new Date(t).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' });
+}
+function babyAge(birth) {
+  if (!birth) return '';
+  const b = new Date(birth + 'T00:00').getTime();
+  const days = Math.floor((L.startOfDay() - b) / L.DAY);
+  if (days < 0) return `due in ${-days} day${days === -1 ? '' : 's'}`;
+  if (days < 14) return `${days} day${days === 1 ? '' : 's'} old`;
+  if (days < 84) return `${Math.floor(days / 7)} weeks ${days % 7 ? `${days % 7} d` : ''} old`;
+  return `${Math.floor(days / 30.44)} months old`;
+}
+const side = k => (k === 'left' ? 'Left' : 'Right');
+const whoTag = by => by ? `<span class="who ${by === 'Sergio' ? 's' : 'a'}">${by === 'Sergio' ? 'S' : 'AR'}</span>` : '';
+
+function describe(e) {
+  if (e.type === 'feed') {
+    if (L.isBreast(e)) return { ic: '🤱', what: `${side(e.kind)} breast · ${e.end == null ? 'feeding…' : dur(e.end - e.start)}` };
+    if (e.kind === 'bottle') return { ic: '🍼', what: `Bottle · ${e.ml || 0} ml` };
+    return { ic: '🫙', what: `Pumped · ${e.ml || 0} ml` };
+  }
+  if (e.type === 'diaper') {
+    const k = { wet: 'Wet', dirty: 'Dirty', both: 'Wet + dirty' }[e.kind] || 'Diaper';
+    return { ic: '🧷', what: `${k}${e.color ? ` · ${e.color}` : ''}` };
+  }
+  return { ic: '😴', what: e.end == null ? 'Sleeping…' : `Slept ${dur(e.end - e.start)}` };
+}
+
+// ---------- Data wiring ----------
+function all() { return L.visible([...S.entries, ...S.older.filter(o => !S.entries.some(e => e.id === o.id))]); }
+
+let unsub = [];
+function start() {
+  db.connect(S.fid);
+  unsub.forEach(u => u());
+  const since = L.startOfDay() - (WINDOW_DAYS - 1) * L.DAY;
+  S.olderFrom = since;
+  unsub = [
+    db.watchEntries(since, ({ list, pending }) => { S.entries = list; S.pending = pending; render(); }),
+    db.watchContacts(({ list, pending }) => { S.contacts = list; S.contactsPending = pending; if (S.view === 'contacts') render(); }),
+    db.watchBaby(b => { S.baby = b; render(); }),
+  ];
+}
+
+function logEntry(fields, { toastText, undo = true, extra = [] } = {}) {
+  const id = db.newId();
+  const now = Date.now();
+  const e = { id, type: fields.type, kind: fields.kind ?? null, start: fields.start ?? now, end: fields.end ?? null,
+    ml: fields.ml ?? null, color: fields.color ?? null, note: fields.note ?? '', by: S.me, createdAt: now, deleted: false };
+  if (e.type === 'diaper' || (e.type === 'feed' && !['left', 'right'].includes(e.kind))) e.end = e.start;
+  db.saveEntry(id, e);
+  buzz();
+  const actions = [];
+  if (undo) actions.push({ label: 'Undo', fn: () => db.saveEntry(id, { deleted: true }) });
+  actions.push(...extra(id), { label: 'Note', fn: () => openEdit(id, true) });
+  toast(toastText, actions);
+  return id;
+}
+
+// ---------- Actions from the big buttons ----------
+function stopFeed(e) {
+  const end = Date.now();
+  db.saveEntry(e.id, { end });
+  buzz();
+  const other = e.kind === 'left' ? 'right' : 'left';
+  toast(`${side(e.kind)} · ${dur(end - e.start)} saved`, [
+    { label: 'Undo', fn: () => db.saveEntry(e.id, { end: null }) },
+    { label: `Start ${side(other)}`, fn: () => logEntry({ type: 'feed', kind: other }, { toastText: `${side(other)} breast started`, extra: () => [] }) },
+  ]);
+}
+
+function toggleSleep() {
+  const list = all();
+  const running = L.runningSleep(list);
+  if (running) {
+    const end = Date.now();
+    db.saveEntry(running.id, { end });
+    buzz();
+    toast(`Woke up · slept ${dur(end - running.start)}`, [
+      { label: 'Undo', fn: () => db.saveEntry(running.id, { end: null }) },
+      { label: 'Edit', fn: () => openEdit(running.id) },
+    ]);
+  } else {
+    logEntry({ type: 'sleep' }, { toastText: 'Asleep from now', extra: id => [{ label: 'Edit', fn: () => openEdit(id) }] });
+  }
+}
+
+// ---------- Rendering ----------
+function render() {
+  const app = $('#app');
+  if (!S.fid || !S.me) return renderSetup(app);
+  if (S.view === 'contacts') return renderContacts(app);
+  if (S.view === 'settings') return renderSettings(app);
+  renderHome(app);
+}
+
+function syncBadge() {
+  const n = S.pending.size + S.contactsPending.size;
+  const offline = !navigator.onLine;
+  const text = n ? `${n} waiting to sync${offline ? ' (offline)' : ''}` : offline ? 'Offline · saved on phone' : 'Synced';
+  return `<span class="sync ${n || offline ? 'waiting' : ''}"><span class="dot"></span>${text}</span>`;
+}
+
+function renderHome(app) {
+  const list = all();
+  const now = Date.now();
+  const sess = L.lastFeedSession(list);
+  const feedRun = L.runningFeed(list);
+  const diaper = L.lastDiaper(list);
+  const sl = L.sleepState(list, now);
+  const t = L.todayTotals(list, now);
+  const next = L.nextSide(list);
+
+  let feedTile;
+  if (feedRun) feedTile = `<button class="tile feed running" data-edit="${feedRun.id}"><div class="label">Feeding now</div>
+      <div class="big" data-timer="${feedRun.start}">${clockTimer(now - feedRun.start)}</div><div class="small">${side(feedRun.kind)} breast</div></button>`;
+  else if (sess) {
+    const sides = sess.parts.map(p => L.isBreast(p) ? side(p.kind) : p.kind === 'bottle' ? `${p.ml} ml` : '').filter(Boolean).join(' + ');
+    feedTile = `<div class="tile feed"><div class="label">Last feed</div><div class="big" data-ago="${sess.start}">${ago(sess.start)}</div>
+      <div class="small">${esc(sides)} · next: <b>${side(next)}</b></div></div>`;
+  } else feedTile = `<div class="tile feed"><div class="label">Last feed</div><div class="big">–</div><div class="small">next: ${side(next)}</div></div>`;
+
+  const diaperTile = `<div class="tile diaper"><div class="label">Last diaper</div>
+    <div class="big" ${diaper ? `data-ago="${diaper.start}"` : ''}>${diaper ? ago(diaper.start) : '–'}</div>
+    <div class="small">${diaper ? esc(describe(diaper).what) : 'none yet'}</div></div>`;
+
+  const sleepTile = `<div class="tile sleep ${sl?.asleep ? 'running' : ''}"><div class="label">${sl ? (sl.asleep ? 'Asleep for' : 'Awake for') : 'Sleep'}</div>
+    <div class="big" ${sl ? `data-ago="${sl.since}"` : ''}>${sl ? ago(sl.since) : '–'}</div>
+    <div class="small">${sl ? `since ${clock(sl.since)}` : 'none yet'}</div></div>`;
+
+  const todayTile = `<div class="tile today"><div class="label">Today</div><div class="today-grid">
+    <b>${t.feeds}</b><span>feeds${t.breastMin ? ` · ${t.breastMin} min breast` : ''}</span>
+    ${t.bottleMl ? `<b>${t.bottleMl}</b><span>ml bottle</span>` : ''}
+    ${t.pumpMl ? `<b>${t.pumpMl}</b><span>ml pumped</span>` : ''}
+    <b>${t.wet}/${t.dirty}</b><span>wet / dirty</span>
+    <b>${dur(t.sleepMs)}</b><span>sleep</span></div></div>`;
+
+  // Timeline grouped by day
+  let rows = '', lastDay = null;
+  for (const e of list) {
+    const d = dayLabel(e.start);
+    if (d !== lastDay) { rows += `<div class="day">${d}</div>`; lastDay = d; }
+    const { ic, what } = describe(e);
+    rows += `<button class="row" data-edit="${e.id}"><span class="ic">${ic}</span><span class="main">
+      <div class="what">${esc(what)}${whoTag(e.by)}${S.pending.has(e.id) ? ' <span class="waiting-mark">⏳</span>' : ''}</div>
+      ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}</span><span class="time">${clock(e.start)}</span></button>`;
+  }
+  if (!list.length) rows = `<div class="empty">Nothing logged yet.<br>Tap a big button below to start.</div>`;
+
+  const sleepBtn = sl?.asleep
+    ? `<button class="act sleep running" data-act="sleep"><span class="emoji">🌤️</span>Woke up<span class="hint" data-ago="${sl.since}">${ago(sl.since)}</span></button>`
+    : `<button class="act sleep" data-act="sleep"><span class="emoji">😴</span>Sleep<span class="hint">${sl ? `awake ${ago(sl.since)}` : 'start'}</span></button>`;
+  const feedBtn = feedRun
+    ? `<button class="act feed running" data-act="stopfeed"><span class="emoji">⏹️</span>Stop feed<span class="hint" data-timer="${feedRun.start}">${side(feedRun.kind)} ${clockTimer(now - feedRun.start)}</span></button>`
+    : `<button class="act feed" data-act="feed"><span class="emoji">🍼</span>Feed<span class="hint">next: ${side(next)}</span></button>`;
+
+  app.innerHTML = `<div class="screen">
+    <div class="topbar"><div class="grow"><h1>${esc(S.baby?.name || 'Baby')}</h1>
+      <div class="sub">${esc(babyAge(S.baby?.birth))} ${syncBadge()}</div></div>
+      <button class="iconbtn" data-nav="contacts" aria-label="Contacts">📞</button>
+      <button class="iconbtn" data-nav="settings" aria-label="Settings">⚙️</button></div>
+    <div class="now">${feedTile}${diaperTile}${sleepTile}${todayTile}</div>
+    ${rows}
+    <button class="more" data-act="older">Show earlier days</button>
+  </div>
+  <div class="bar"><div class="bar-inner">${feedBtn}
+    <button class="act diaper" data-act="diaper"><span class="emoji">🧷</span>Diaper<span class="hint" ${diaper ? `data-ago="${diaper.start}"` : ''}>${diaper ? agoLong(diaper.start) : ''}</span></button>
+    ${sleepBtn}</div></div>`;
+}
+
+// Live clocks without redrawing the whole screen.
+setInterval(() => {
+  const now = Date.now();
+  document.querySelectorAll('[data-timer]').forEach(el => {
+    const txt = el.textContent.replace(/[\d:]+$/, '');
+    el.textContent = txt + clockTimer(now - +el.dataset.timer);
+  });
+}, 1000);
+setInterval(() => { if (S.view === 'home' && !S.sheet && S.fid && S.me) render(); }, 30000);
+window.addEventListener('online', render);
+window.addEventListener('offline', render);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+
+// ---------- Sheets ----------
+function openSheet(kind, data = {}) {
+  if (!S.sheet) history.pushState({ sheet: true }, '');
+  S.sheet = { kind, start: null, color: null, note: '', showNote: false, ...data };
+  drawSheet();
+  $('#sheet').hidden = false; $('#sheet-backdrop').hidden = false;
+}
+function closeSheet(fromBack = false) {
+  if (!S.sheet) return;
+  S.sheet = null;
+  $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true;
+  if (!fromBack) { S.ignorePop = true; history.back(); }
+  render();
+}
+
+function timeChips() {
+  const opts = [[null, 'Now'], [5, '5 min ago'], [15, '15 min ago'], [30, '30 min ago'], [60, '1 h ago']];
+  const sel = S.sheet.startOffset ?? null;
+  const custom = S.sheet.startOffset === 'custom';
+  return `<div class="timeline-chips">${opts.map(([v, l]) => `<button class="chip ${sel === v ? 'on' : ''}" data-offset="${v ?? ''}">${l}</button>`).join('')}
+    <button class="chip ${custom ? 'on' : ''}" data-offset="custom">Other…</button></div>
+    ${custom ? `<label class="field"><span>Started at</span><input type="datetime-local" id="custom-time" value="${toInput(S.sheet.customTime || Date.now())}"></label>` : ''}`;
+}
+function sheetStart() {
+  const o = S.sheet.startOffset;
+  if (o === 'custom') return fromInput($('#custom-time')?.value) || Date.now();
+  return o ? Date.now() - o * L.MIN : Date.now();
+}
+function noteBlock() {
+  return S.sheet.showNote
+    ? `<label class="field"><span>Note (optional)</span><textarea id="note" placeholder="e.g. spit up a bit">${esc(S.sheet.note)}</textarea></label>`
+    : `<button class="notebtn" data-act="shownote">+ Add a note</button>`;
+}
+const readNote = () => ($('#note')?.value ?? S.sheet.note ?? '').trim();
+
+function drawSheet() {
+  const sh = S.sheet, el = $('#sheet');
+  const list = all();
+  let body = '';
+  if (sh.kind === 'feed') {
+    const next = L.nextSide(list);
+    const bottle = sh.bottle ?? L.lastAmount(list, 'bottle', 60);
+    const pump = sh.pump ?? L.lastAmount(list, 'pump', 100);
+    sh.bottle = bottle; sh.pump = pump;
+    body = `<div class="sheet-title"><h2>Feed</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+      ${timeChips()}
+      <div class="choices">
+        ${['left', 'right'].map(k => `<button class="big-choice ${k === next ? 'suggested' : ''}" data-feed="${k}">
+          <span class="emoji">🤱</span>${side(k)}<small>${k === next ? 'next side · starts timer' : 'starts timer'}</small></button>`).join('')}
+      </div>
+      <div class="amount"><div class="top"><span class="label">🍼 Bottle</span>
+        <div class="stepper"><button data-step="bottle:-10">−</button><span class="val">${bottle} ml</span><button data-step="bottle:10">+</button></div></div>
+        <button class="save" data-feed="bottle">Log bottle · ${bottle} ml</button></div>
+      <div class="amount"><div class="top"><span class="label">🫙 Pump</span>
+        <div class="stepper"><button data-step="pump:-10">−</button><span class="val">${pump} ml</span><button data-step="pump:10">+</button></div></div>
+        <button class="save" style="background:var(--card-2);color:var(--text)" data-feed="pump">Log pumping · ${pump} ml</button></div>
+      ${noteBlock()}`;
+  } else if (sh.kind === 'diaper') {
+    body = `<div class="sheet-title"><h2>Diaper</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+      ${timeChips()}
+      <div class="choices three" style="--c:var(--diaper)">
+        <button class="big-choice primary" data-diaper="wet"><span class="emoji">💧</span>Wet</button>
+        <button class="big-choice primary" data-diaper="dirty"><span class="emoji">💩</span>Dirty</button>
+        <button class="big-choice primary" data-diaper="both"><span class="emoji">💧💩</span>Both</button>
+      </div>
+      <div class="section-label">Colour (optional, pick before tapping)</div>
+      <div class="timeline-chips">${Object.entries(COLORS).map(([n, c]) => `<button class="chip ${sh.color === n ? 'on' : ''}" data-color="${n}"><span class="swatch" style="background:${c}"></span>${n}</button>`).join('')}</div>
+      ${noteBlock()}`;
+  } else if (sh.kind === 'edit') body = editBody();
+  else if (sh.kind === 'contact') body = contactBody();
+  el.innerHTML = `<div class="grab"></div>${body}`;
+}
+
+// ---------- Edit sheet ----------
+function openEdit(id, focusNote = false) {
+  const e = all().find(x => x.id === id);
+  if (!e) return;
+  openSheet('edit', { id, draft: { ...e }, focusNote, confirmDelete: false });
+  if (focusNote) setTimeout(() => $('#note')?.focus(), 50);
+}
+
+function editBody() {
+  const d = S.sheet.draft;
+  const kinds = d.type === 'feed' ? [['left', 'Left'], ['right', 'Right'], ['bottle', 'Bottle'], ['pump', 'Pump']]
+    : d.type === 'diaper' ? [['wet', 'Wet'], ['dirty', 'Dirty'], ['both', 'Both']] : [];
+  const hasEnd = d.type === 'sleep' || L.isBreast(d);
+  const hasMl = d.type === 'feed' && (d.kind === 'bottle' || d.kind === 'pump');
+  const title = { feed: 'Edit feed', diaper: 'Edit diaper', sleep: 'Edit sleep' }[d.type];
+  return `<div class="sheet-title"><h2>${title}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+    ${kinds.length ? `<div class="seg" style="margin-bottom:12px">${kinds.map(([k, l]) => `<button class="chip ${d.kind === k ? 'on' : ''}" data-kind="${k}">${l}</button>`).join('')}</div>` : ''}
+    <label class="field"><span>${hasEnd ? 'Started' : 'Time'}</span><input type="datetime-local" id="ed-start" value="${toInput(d.start)}"></label>
+    ${hasEnd ? (d.end == null
+      ? `<div class="field"><span>Ended</span><button class="btn wide" data-act="endnow">Still going · tap to stop now</button></div>`
+      : `<label class="field"><span>Ended</span><input type="datetime-local" id="ed-end" value="${toInput(d.end)}"></label>`) : ''}
+    ${hasMl ? `<label class="field"><span>Amount (ml)</span><input type="number" inputmode="numeric" id="ed-ml" value="${d.ml ?? ''}"></label>` : ''}
+    ${d.type === 'diaper' ? `<div class="section-label">Colour</div><div class="timeline-chips">
+      <button class="chip ${!d.color ? 'on' : ''}" data-dcolor="">None</button>
+      ${Object.entries(COLORS).map(([n, c]) => `<button class="chip ${d.color === n ? 'on' : ''}" data-dcolor="${n}"><span class="swatch" style="background:${c}"></span>${n}</button>`).join('')}</div>` : ''}
+    <label class="field"><span>Note</span><textarea id="note">${esc(d.note)}</textarea></label>
+    <p class="sub" style="color:var(--muted);font-size:14px;margin:0 0 10px">Logged by ${esc(d.by || 'unknown')}</p>
+    <div class="btn-row"><button class="btn danger" data-act="delete">${S.sheet.confirmDelete ? 'Tap again to delete' : 'Delete'}</button>
+      <button class="btn primary" data-act="saveedit">Save</button></div>`;
+}
+
+function readEditInputs() {
+  const d = S.sheet.draft;
+  const s = fromInput($('#ed-start')?.value); if (s) d.start = s;
+  if ($('#ed-end')) d.end = fromInput($('#ed-end').value);
+  if ($('#ed-ml')) d.ml = Number($('#ed-ml').value) || 0;
+  d.note = ($('#note')?.value ?? d.note).trim();
+}
+
+function saveEdit() {
+  readEditInputs();
+  const d = S.sheet.draft;
+  const orig = all().find(x => x.id === d.id) || {};
+  if (d.end != null && d.end < d.start) return toast('End is before start', []);
+  if (d.type === 'diaper' || (d.type === 'feed' && !L.isBreast(d))) d.end = d.start;
+  const changed = {};
+  for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note']) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
+  if (Object.keys(changed).length) db.saveEntry(d.id, changed);
+  closeSheet();
+  if (Object.keys(changed).length) toast('Saved', []);
+}
+
+// ---------- Contacts ----------
+function renderContacts(app) {
+  const list = S.contacts.filter(c => !c.deleted).sort((a, b) => ROLES.indexOf(a.role) - ROLES.indexOf(b.role) || a.name.localeCompare(b.name));
+  const tel = p => String(p || '').replace(/[^\d+]/g, '');
+  app.innerHTML = `<div class="screen" style="padding-bottom:40px">
+    <div class="topbar"><button class="iconbtn" data-nav="home" aria-label="Back">←</button><div class="grow"><h1>Contacts</h1></div>
+      <button class="btn primary" data-act="addcontact">+ Add</button></div>
+    ${list.map(c => `<div class="contact"><div class="head"><span class="name">${esc(c.name)}</span><span class="role">${esc(c.role || '')}</span></div>
+      ${c.when ? `<div class="when"><b>Call when:</b> ${esc(c.when)}</div>` : ''}
+      ${c.note ? `<div class="when" style="color:var(--muted)">${esc(c.note)}</div>` : ''}
+      <div class="actions">${c.phone ? `<a class="call" href="tel:${esc(tel(c.phone))}">📞 Call</a>` : ''}
+        ${c.email ? `<a href="mailto:${esc(c.email)}">✉️ Email</a>` : ''}
+        <button data-contact="${c.id}">Edit</button></div></div>`).join('')
+      || `<div class="empty">No contacts yet. Add the pediatrician, the hospital and the nurse line first.</div>`}
+  </div>`;
+}
+
+function contactBody() {
+  const c = S.sheet.draft;
+  return `<div class="sheet-title"><h2>${c.isNew ? 'New contact' : 'Edit contact'}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+    <label class="field"><span>Name</span><input id="c-name" value="${esc(c.name)}" autocomplete="off"></label>
+    <label class="field"><span>Role</span><select id="c-role">${ROLES.map(r => `<option ${c.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+    <label class="field"><span>Phone</span><input id="c-phone" type="tel" value="${esc(c.phone)}"></label>
+    <label class="field"><span>Email</span><input id="c-email" type="email" value="${esc(c.email)}"></label>
+    <label class="field"><span>When to call</span><textarea id="c-when" placeholder="e.g. fever over 38 °C, fewer than 6 wet diapers a day">${esc(c.when)}</textarea></label>
+    <label class="field"><span>Notes</span><textarea id="c-note">${esc(c.note)}</textarea></label>
+    <div class="btn-row">${c.isNew ? '' : `<button class="btn danger" data-act="delcontact">${S.sheet.confirmDelete ? 'Tap again to delete' : 'Delete'}</button>`}
+      <button class="btn primary" data-act="savecontact">Save</button></div>`;
+}
+
+function saveContact() {
+  const c = S.sheet.draft;
+  const v = id => $(id).value.trim();
+  const fields = { name: v('#c-name'), role: v('#c-role'), phone: v('#c-phone'), email: v('#c-email'), when: v('#c-when'), note: v('#c-note'), deleted: false };
+  if (!fields.name) return toast('Add a name first', []);
+  db.saveContact(c.id, fields);
+  closeSheet();
+}
+
+// ---------- Settings ----------
+function inviteLink() { return `${location.origin}${location.pathname}#join=${S.fid}`; }
+
+function renderSettings(app) {
+  app.innerHTML = `<div class="screen" style="padding-bottom:40px">
+    <div class="topbar"><button class="iconbtn" data-nav="home" aria-label="Back">←</button><div class="grow"><h1>Settings</h1></div></div>
+    <div class="panel"><h3>Baby</h3>
+      <label class="field"><span>Name</span><input id="s-name" value="${esc(S.baby?.name || '')}"></label>
+      <label class="field"><span>Birth date (or due date)</span><input id="s-birth" type="date" value="${esc(S.baby?.birth || '')}"></label>
+      <button class="btn primary wide" data-act="savebaby">Save</button></div>
+    <div class="panel"><h3>This phone belongs to</h3>
+      <div class="seg">${PEOPLE.map(p => `<button class="chip ${S.me === p ? 'on' : ''}" data-me="${p}">${p}</button>`).join('')}</div></div>
+    <div class="panel"><h3>Look</h3>
+      <div class="seg">${[['light', 'Light'], ['night', 'Dark at night'], ['dark', 'Dark']].map(([v, l]) => `<button class="chip ${(store.get('theme') || 'light') === v ? 'on' : ''}" data-theme-pick="${v}">${l}</button>`).join('')}</div>
+      <p style="margin:8px 0 0">"Dark at night" switches to dark from 8 PM to 7 AM, so the screen doesn't glare during night feeds.</p></div>
+    <div class="panel"><h3>Add the other phone</h3>
+      <p>Send this link to the other phone and open it in Chrome. Anyone with the link can see and add entries, so only share it between the two of you.</p>
+      <div class="mono" id="invite">${esc(inviteLink())}</div>
+      <div class="btn-row"><button class="btn" data-act="share">Share link</button><button class="btn" data-act="copy">Copy</button></div></div>
+    <div class="panel"><h3>Backup</h3><p>Download everything logged in the last ${WINDOW_DAYS} days plus anything you loaded, as a spreadsheet file.</p>
+      <button class="btn wide" data-act="csv">Download CSV</button></div>
+    <div class="panel"><h3>Sync</h3><p>${syncBadge()}</p><p>Entries are saved on this phone first and sent as soon as there's signal. Closing the app doesn't lose them.</p>
+      <p>Family ID (for the Notion copy): <span class="mono" style="display:block;margin-top:6px">${esc(S.fid)}</span></p></div>
+  </div>`;
+}
+
+function exportCsv() {
+  const rows = [['type', 'kind', 'start', 'end', 'minutes', 'ml', 'color', 'note', 'logged_by']];
+  for (const e of all()) {
+    rows.push([e.type, e.kind || '', new Date(e.start).toISOString(), e.end ? new Date(e.end).toISOString() : '',
+      e.end ? Math.round((e.end - e.start) / L.MIN) : '', e.ml ?? '', e.color || '', e.note || '', e.by || '']);
+  }
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `picos-baby-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
+
+// ---------- Setup ----------
+function renderSetup(app) {
+  const joining = S.joinFid;
+  app.innerHTML = `<div class="setup">
+    <h1>${joining ? 'Join the baby log' : 'Welcome 👶'}</h1>
+    <p>${joining ? 'This phone will share the same log as the other one.' : 'Two quick things and you\'re ready. The other phone joins with a link from Settings.'}</p>
+    ${joining ? '' : `<label class="field"><span>Baby's name</span><input id="su-name" autocomplete="off"></label>
+    <label class="field"><span>Birth date (or due date)</span><input id="su-birth" type="date"></label>`}
+    <div class="section-label">Who uses this phone?</div>
+    <div class="choices">${PEOPLE.map(p => `<button class="big-choice" data-setup="${p}">${p}</button>`).join('')}</div>
+  </div>`;
+}
+
+function finishSetup(person) {
+  if (S.joinFid) {
+    S.fid = S.joinFid;
+  } else {
+    const name = $('#su-name').value.trim(), birth = $('#su-birth').value;
+    if (!name) { $('#su-name').focus(); return toast('Add the baby\'s name first', []); }
+    S.fid = db.newFamilyId();
+    db.connect(S.fid);
+    db.saveBaby({ name, birth });
+  }
+  S.me = person;
+  store.set('family', S.fid); store.set('me', person);
+  history.replaceState(null, '', location.pathname + location.search);
+  start();
+  render();
+}
+
+// ---------- Toast ----------
+let toastTimer;
+let toastActions = [];
+function toast(text, actions = []) {
+  const el = $('#toast');
+  toastActions = actions;
+  el.innerHTML = `<span class="msg">${esc(text)}</span>${actions.map((a, i) => `<button data-toast="${i}">${esc(a.label)}</button>`).join('')}`;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, actions.length ? 7000 : 2500);
+}
+
+// ---------- Taps ----------
+document.addEventListener('click', ev => {
+  const t = ev.target.closest('button, [data-edit]');
+  if (!t) return;
+  const ds = t.dataset;
+  const list = all();
+
+  if (ds.toast != null) { $('#toast').hidden = true; return toastActions[+ds.toast]?.fn(); }
+  if (ds.setup) return finishSetup(ds.setup);
+  if (ds.nav) { if (ds.nav !== 'home') history.pushState({ view: ds.nav }, ''); else if (S.view !== 'home') return history.back(); S.view = ds.nav; window.scrollTo(0, 0); return render(); }
+  if (ds.edit) return openEdit(ds.edit);
+  if (ds.themePick) { store.set('theme', ds.themePick); applyTheme(); return render(); }
+  if (ds.me) { S.me = ds.me; store.set('me', ds.me); return render(); }
+  if (ds.contact) { const c = S.contacts.find(x => x.id === ds.contact); return openSheet('contact', { draft: { ...c }, confirmDelete: false }); }
+
+  // Inside sheets
+  if (ds.offset != null) {
+    if (S.sheet.showNote) S.sheet.note = readNote();
+    S.sheet.startOffset = ds.offset === '' ? null : ds.offset === 'custom' ? 'custom' : +ds.offset;
+    return drawSheet();
+  }
+  if (ds.step) {
+    const [k, d] = ds.step.split(':');
+    if (S.sheet.showNote) S.sheet.note = readNote();
+    S.sheet[k] = Math.max(0, S.sheet[k] + +d);
+    return drawSheet();
+  }
+  if (ds.color) { S.sheet.color = S.sheet.color === ds.color ? null : ds.color; if (S.sheet.showNote) S.sheet.note = readNote(); return drawSheet(); }
+  if (ds.feed) {
+    const startAt = sheetStart(), note = readNote(), k = ds.feed;
+    const ml = k === 'bottle' ? S.sheet.bottle : S.sheet.pump;
+    const backdated = Date.now() - startAt > L.MIN;
+    closeSheet();
+    if (k === 'left' || k === 'right') {
+      return logEntry({ type: 'feed', kind: k, start: startAt, note }, { toastText: `${side(k)} breast started${backdated ? ` at ${clock(startAt)}` : ''}`, extra: () => [] });
+    }
+    return logEntry({ type: 'feed', kind: k, start: startAt, ml, note }, { toastText: `${k === 'bottle' ? 'Bottle' : 'Pumping'} · ${ml} ml saved`, extra: () => [] });
+  }
+  if (ds.diaper) {
+    const startAt = sheetStart(), note = readNote(), color = S.sheet.color;
+    closeSheet();
+    return logEntry({ type: 'diaper', kind: ds.diaper, start: startAt, color: ds.diaper === 'wet' ? null : color, note }, { toastText: `${{ wet: 'Wet', dirty: 'Dirty', both: 'Wet + dirty' }[ds.diaper]} diaper saved`, extra: () => [] });
+  }
+  if (ds.kind) { readEditInputs(); S.sheet.draft.kind = ds.kind; if (L.isBreast(S.sheet.draft) && S.sheet.draft.end === S.sheet.draft.start) S.sheet.draft.end = S.sheet.draft.start + 10 * L.MIN; return drawSheet(); }
+  if (ds.dcolor != null) { readEditInputs(); S.sheet.draft.color = ds.dcolor || null; return drawSheet(); }
+
+  switch (ds.act) {
+    case 'feed': return openSheet('feed');
+    case 'diaper': return openSheet('diaper');
+    case 'sleep': return toggleSleep();
+    case 'stopfeed': { const r = L.runningFeed(list); return r && stopFeed(r); }
+    case 'close': return closeSheet();
+    case 'shownote': S.sheet.showNote = true; drawSheet(); return $('#note')?.focus();
+    case 'endnow': readEditInputs(); S.sheet.draft.end = Date.now(); return drawSheet();
+    case 'saveedit': return saveEdit();
+    case 'delete':
+      if (!S.sheet.confirmDelete) { readEditInputs(); S.sheet.confirmDelete = true; return drawSheet(); }
+      { const id = S.sheet.draft.id; db.saveEntry(id, { deleted: true }); closeSheet(); return toast('Deleted', [{ label: 'Undo', fn: () => db.saveEntry(id, { deleted: false }) }]); }
+    case 'addcontact': return openSheet('contact', { draft: { id: db.newId(), isNew: true, role: 'Pediatrician' }, confirmDelete: false });
+    case 'savecontact': return saveContact();
+    case 'delcontact':
+      if (!S.sheet.confirmDelete) { S.sheet.confirmDelete = true; return drawSheet(); }
+      db.saveContact(S.sheet.draft.id, { deleted: true }); return closeSheet();
+    case 'savebaby': db.saveBaby({ name: $('#s-name').value.trim(), birth: $('#s-birth').value }); return toast('Saved', []);
+    case 'share': return navigator.share ? navigator.share({ title: 'Baby log', url: inviteLink() }).catch(() => {}) : navigator.clipboard?.writeText(inviteLink()).then(() => toast('Link copied', []));
+    case 'copy': return navigator.clipboard?.writeText(inviteLink()).then(() => toast('Link copied', []));
+    case 'csv': return exportCsv();
+    case 'older': return loadOlder();
+  }
+});
+
+
+$('#sheet-backdrop').addEventListener('click', () => closeSheet());
+
+async function loadOlder() {
+  const to = S.olderFrom, from = to - 7 * L.DAY;
+  try {
+    const more = await db.loadEntries(from, to);
+    S.older.push(...more); S.olderFrom = from;
+    toast(more.length ? `Loaded ${more.length} older entries` : 'Nothing earlier than this', []);
+    render();
+  } catch { toast('Can\'t load older days while offline', []); }
+}
+
+// Android back button closes sheets and returns home.
+window.addEventListener('popstate', () => {
+  if (S.ignorePop) { S.ignorePop = false; return; }
+  if (S.sheet) return closeSheet(true);
+  if (S.view !== 'home') { S.view = 'home'; render(); }
+});
+
+// ---------- Boot ----------
+const join = new URLSearchParams(location.hash.slice(1)).get('join');
+if (join && join !== S.fid) {
+  S.joinFid = join;
+  if (S.fid) { S.fid = null; } // switching family on purpose via a new link
+}
+if (S.fid && S.me) start();
+render();
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Each family lives under a long random ID that only the two phones
+    // (and the Notion job) know. Nobody can list families, so the ID is the key.
+    match /families/{familyId}/{document=**} {
+      allow read, write: if familyId.size() >= 20;
+    }
+  }
+}

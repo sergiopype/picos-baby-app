@@ -1,0 +1,20 @@
+name: Copy to Notion
+on:
+  schedule:
+    - cron: '17 * * * *'   # every hour, at 17 minutes past
+  workflow_dispatch: {}     # lets you run it by hand from the Actions tab
+concurrency: notion-sync
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node notion-sync/sync.mjs
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FAMILY_ID: ${{ secrets.FAMILY_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}

@@ -1,0 +1,22 @@
+{
+  "name": "picos-baby",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "serve": "node scripts/serve.mjs",
+    "emulator": "firebase emulators:start --only firestore --project demo-picos",
+    "test:sync": "node tests/sync.test.mjs",
+    "test:app": "node tests/app.test.mjs",
+    "test:notion": "node tests/notion.test.mjs",
+    "test": "node tests/sync.test.mjs && node tests/app.test.mjs && node tests/notion.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "firebase": "^11.10.0",
+    "firebase-tools": "^15.37.0"
+  },
+  "type": "module"
+}
