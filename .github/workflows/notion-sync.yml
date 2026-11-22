@@ -14,7 +14,8 @@ jobs:
         with: { node-version: 22 }
       - run: node notion-sync/sync.mjs
         env:
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          # Not secret: the same values ship to every phone in app/config.js.
+          FIREBASE_PROJECT_ID: picos-baby-app
+          FIREBASE_API_KEY: AIzaSyCiDZyC1prCC4mj9GIbGT_5eTrHp1lbMdk
           FAMILY_ID: ${{ secrets.FAMILY_ID }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}

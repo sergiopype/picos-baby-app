@@ -72,11 +72,10 @@ in Firebase, and in GitHub's encrypted secrets.
 ### 4. Notion copy
 1. Go to https://www.notion.so/profile/integrations → **New integration**. Name it `Picos Baby`, type Internal. Copy the **secret**.
 2. Open the **Picos Baby App** page in Notion → **⋯ → Connections → Picos Baby**.
-3. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**, four more times:
+3. In GitHub: **Settings → Secrets and variables → Actions → Secrets tab → New repository secret**, twice:
    - `NOTION_TOKEN`: the Notion secret
    - `FAMILY_ID`: from the app's **Settings → Sync** section
-   - `FIREBASE_PROJECT_ID`: the `projectId` from step 1.5
-   - `FIREBASE_API_KEY`: the `apiKey` from step 1.5
+   Use the **Secrets** tab, not Variables: this repository is public and variables can show up in public logs.
 4. **Actions → Copy to Notion → Run workflow** to try it straight away. After that it runs every hour.
 
 ## Using it
