@@ -206,3 +206,30 @@ button { cursor: pointer; border: 0; background: none; }
 }
 #toast .msg { flex: 1; }
 #toast button { color: var(--bg); font-weight: 800; padding: 10px 12px; min-height: 44px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 12%, transparent); }
+
+/* ---------- Sleep card ---------- */
+.sleep-go {
+  width: 100%; min-height: 96px; border-radius: 20px; background: var(--sleep); color: var(--on-accent);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-size: 22px; font-weight: 800; margin-bottom: 4px;
+}
+.sleep-go .emoji { font-size: 30px; line-height: 1; }
+.sleep-go small { font-size: 13px; font-weight: 600; opacity: .85; font-variant-numeric: tabular-nums; }
+.sleep-go.running { outline: 4px solid var(--text); outline-offset: -4px; }
+.sleep-go:active { transform: scale(.98); }
+.daynight { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.dn {
+  min-height: 64px; border-radius: 16px; background: var(--card); border: 3px solid transparent;
+  display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 18px; font-weight: 700;
+}
+.dn .emoji { font-size: 26px; }
+.dn.on { border-color: var(--sleep); background: color-mix(in srgb, var(--sleep) 18%, var(--card)); }
+.check {
+  display: flex; align-items: center; gap: 12px; min-height: 56px; margin: 14px 0 12px; padding: 0 14px;
+  border-radius: 14px; background: var(--card); font-size: 17px; font-weight: 600;
+}
+.check input { width: 24px; height: 24px; accent-color: var(--sleep); margin: 0; }
+.temp-row { display: flex; align-items: center; gap: 8px; }
+.temp-row input { max-width: 120px; font-size: 20px; font-weight: 700; text-align: center; }
+.temp-row b { font-size: 18px; }
+.fine { color: var(--muted); font-size: 14px; margin: 0 0 10px; }

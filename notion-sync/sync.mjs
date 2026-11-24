@@ -79,6 +79,14 @@ const who = by => sel(by === 'Sergio' || by === 'Ana Rita' ? by : null);
 const mins = e => Math.round((e.end - e.start) / 60000);
 const fmtDur = m => (m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}` : `${m} min`);
 
+// Sleep details: app value -> Notion option (same labels as the app).
+const SLEEP = {
+  period: { day: 'Day', night: 'Night' },
+  cover: { swaddle: 'Swaddle', sleeping_bag: 'Sleeping bag', blanket: 'Blanket' },
+  location: { bassinet: 'Bedside bassinet', crib: 'Crib', cot: 'Cot', other: 'Other' },
+  sound: { silence: 'Silence', white_noise: 'White noise', music: 'Music' },
+};
+
 function entryToNotion(e) {
   if (e.type === 'feed') {
     const breast = e.kind === 'left' || e.kind === 'right';
@@ -93,7 +101,10 @@ function entryToNotion(e) {
       Color: sel(e.color), 'Logged by': who(e.by), Notes: txt(e.note) } };
   }
   return { ds: DS.sleep, props: { Entry: title(`Sleep · ${fmtDur(mins(e))}`), Start: date(e.start), End: date(e.end),
-    'Logged by': who(e.by), Notes: txt(e.note) } };
+    'Logged by': who(e.by), Notes: txt(e.note),
+    'Day/Night': sel(SLEEP.period[e.period]), Cover: sel(SLEEP.cover[e.cover]), Location: sel(SLEEP.location[e.location]),
+    Sound: sel(SLEEP.sound[e.sound]), 'Night light': { checkbox: !!e.nightLight },
+    'Room temp (°C)': num(typeof e.tempC === 'number' ? e.tempC : null) } };
 }
 
 function contactToNotion(c) {

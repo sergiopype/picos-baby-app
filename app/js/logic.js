@@ -95,3 +95,23 @@ export function todayTotals(list, now = Date.now()) {
   }
   return t;
 }
+
+// ---------- Sleep details ----------
+export const SLEEP_TEMP_DEFAULT = 23; // °C, every new sleep starts here
+export const SLEEP_FIELDS = ['cover', 'location', 'sound', 'nightLight', 'period', 'tempC'];
+
+// Day is 7 AM to 7 PM by the phone's clock, night is the rest.
+export function dayOrNight(t = Date.now()) {
+  const h = new Date(t).getHours();
+  return h >= 7 && h < 19 ? 'day' : 'night';
+}
+
+// Starting values for a new sleep: cover, place, sound and night light repeat the last sleep
+// (most nights look the same), day/night comes from the clock, temperature is always 23 °C.
+export function sleepDefaults(list, t = Date.now()) {
+  const last = list.find(e => e.type === 'sleep') || {};
+  return {
+    cover: last.cover ?? null, location: last.location ?? null, sound: last.sound ?? null,
+    nightLight: last.nightLight ?? false, period: dayOrNight(t), tempC: SLEEP_TEMP_DEFAULT,
+  };
+}
