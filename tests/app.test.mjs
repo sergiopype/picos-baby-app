@@ -53,10 +53,38 @@ await A.click('[data-act="feed"]');
 check(await A.isVisible('text=Log bottle · 80 ml'), 'Bottle remembers last amount (80 ml)');
 await A.click('[data-act="close"]');
 
-// Sleep toggle
+// Sleep card: details, start, live edit, stop
 await A.click('[data-act="sleep"]');
+check(await A.isVisible('[data-act="startsleep"]'), 'Sleep opens a card with the Start button');
+check(await A.inputValue('#sl-temp') === '23', 'Room temperature starts at 23 °C');
+const h = new Date().getHours(), expected = h >= 7 && h < 19 ? 'day' : 'night';
+check(await A.isVisible(`.dn.on[data-sl="period:${expected}"]`), `Day/Night preselected from the clock (${expected})`);
+await A.click('[data-sl="cover:sleeping_bag"]'); await A.click('[data-sl="location:crib"]'); await A.click('[data-sl="sound:white_noise"]');
+await A.check('#sl-light'); await A.fill('#sl-temp', '22.5');
+await A.click('[data-sl="cover:swaddle"]'); // one choice only: switches from sleeping bag
+check(await A.inputValue('#sl-temp') === '22.5', 'Typed temperature survives a tap on another option');
+check(await A.locator('[data-sl^="cover:"].on').count() === 1, 'Cover allows one choice only');
+await A.screenshot({ path: shots + '/2-sleep-card.png' });
+await A.click('[data-act="startsleep"]');
 check(await has(B, 'Woke up'), 'B: sees baby asleep (Woke up button)');
+check(await has(B, 'Sleeping… · ' + (expected === 'day' ? '☀️' : '🌙') + ' · Crib · Swaddle'), 'B: sleep row shows day/night, place and cover');
+await B.click('[data-act="sleep"]');
+check(await B.isVisible('[data-act="stopsleep"]'), 'B: card shows Woke up · stop while asleep');
+check(await B.inputValue('#sl-temp') === '22.5' && await B.isChecked('#sl-light'), 'B: card shows the details A picked');
+await B.click('[data-sl="sound:music"]');
+await B.click('[data-act="close"]');
+await A.click('[data-act="sleep"]');
+check(await A.locator('.chip.on[data-sl="sound:music"]').waitFor({ timeout: 8000 }).then(() => true, () => false), 'A: sees sound changed on B while asleep');
+await A.click('[data-act="close"]');
 await A.screenshot({ path: shots + '/2-home.png' });
+await B.click('[data-act="sleep"]'); await B.click('[data-act="stopsleep"]');
+check(await has(B, 'Woke up · slept'), 'B: stopping from the card saves the sleep');
+check(await has(A, 'Slept '), 'A: sees the finished sleep');
+await A.click('[data-act="sleep"]');
+check(await A.inputValue('#sl-temp') === '23' && await A.isVisible('.chip.on[data-sl="location:crib"]'), 'Next sleep: temp back to 23 °C, place remembered');
+await A.click('[data-act="close"]');
+await A.click('.row:has-text("Slept")'); await A.click('[data-sl="cover:blanket"]'); await A.click('[data-act="saveedit"]');
+check(await has(B, '· Crib · Blanket'), 'Editing a sleep changes its details (cover → Blanket)');
 
 // Edit: add a note to the diaper from A, and backdate
 await A.click('.row:has-text("Dirty")');

@@ -8,6 +8,13 @@ const PEOPLE = ['Sergio', 'Ana Rita'];
 const COLORS = { Yellow: '#e8c547', Green: '#6b8e3a', Brown: '#8a5a2b', Black: '#222', Red: '#c0392b', White: '#f4f4f4' };
 const ROLES = ['Pediatrician', 'Hospital', 'Emergency', 'Nurse line', 'Pharmacy', 'Family', 'Babysitter', 'Other'];
 const WINDOW_DAYS = 7; // the live view keeps the last week; older days load on request
+// Sleep options: [stored value, label]. Labels also go to Notion as-is.
+const SLEEP_OPTS = {
+  cover: [['swaddle', 'Swaddle'], ['sleeping_bag', 'Sleeping bag'], ['blanket', 'Blanket']],
+  location: [['bassinet', 'Bedside bassinet'], ['crib', 'Crib'], ['cot', 'Cot'], ['other', 'Other']],
+  sound: [['silence', 'Silence'], ['white_noise', 'White noise'], ['music', 'Music']],
+};
+const optLabel = (field, v) => (SLEEP_OPTS[field]?.find(o => o[0] === v) || [])[1] || '';
 
 const store = {
   get: k => { try { return localStorage.getItem('picos.' + k); } catch { return null; } },
@@ -92,7 +99,8 @@ function describe(e) {
     const k = { wet: 'Wet', dirty: 'Dirty', both: 'Wet + dirty' }[e.kind] || 'Diaper';
     return { ic: '🧷', what: `${k}${e.color ? ` · ${e.color}` : ''}` };
   }
-  return { ic: '😴', what: e.end == null ? 'Sleeping…' : `Slept ${dur(e.end - e.start)}` };
+  const extra = [e.period === 'night' ? '🌙' : e.period === 'day' ? '☀️' : '', optLabel('location', e.location), optLabel('cover', e.cover)].filter(Boolean);
+  return { ic: '😴', what: (e.end == null ? 'Sleeping…' : `Slept ${dur(e.end - e.start)}`) + (extra.length ? ` · ${extra.join(' · ')}` : '') };
 }
 
 // ---------- Data wiring ----------
@@ -117,6 +125,7 @@ function logEntry(fields, { toastText, undo = true, extra = [] } = {}) {
   const e = { id, type: fields.type, kind: fields.kind ?? null, start: fields.start ?? now, end: fields.end ?? null,
     ml: fields.ml ?? null, color: fields.color ?? null, note: fields.note ?? '', by: S.me, createdAt: now, deleted: false };
   if (e.type === 'diaper' || (e.type === 'feed' && !['left', 'right'].includes(e.kind))) e.end = e.start;
+  if (e.type === 'sleep') for (const k of L.SLEEP_FIELDS) e[k] = fields[k] ?? null;
   db.saveEntry(id, e);
   buzz();
   const actions = [];
@@ -138,20 +147,64 @@ function stopFeed(e) {
   ]);
 }
 
-function toggleSleep() {
-  const list = all();
-  const running = L.runningSleep(list);
-  if (running) {
-    const end = Date.now();
-    db.saveEntry(running.id, { end });
-    buzz();
-    toast(`Woke up · slept ${dur(end - running.start)}`, [
-      { label: 'Undo', fn: () => db.saveEntry(running.id, { end: null }) },
-      { label: 'Edit', fn: () => openEdit(running.id) },
-    ]);
-  } else {
-    logEntry({ type: 'sleep' }, { toastText: 'Asleep from now', extra: id => [{ label: 'Edit', fn: () => openEdit(id) }] });
-  }
+// Sleep card: Start saves a new sleep with the chosen details; Woke up stops the running one.
+function startSleep() {
+  const sh = S.sheet, startAt = sheetStart(), note = readNote();
+  const d = { ...sh.d, tempC: readTemp() };
+  const backdated = Date.now() - startAt > L.MIN;
+  closeSheet();
+  logEntry({ type: 'sleep', start: startAt, note, ...d }, { toastText: backdated ? `Asleep since ${clock(startAt)}` : 'Asleep from now', extra: id => [{ label: 'Edit', fn: () => openEdit(id) }] });
+}
+function stopSleep() {
+  const running = all().find(e => e.id === S.sheet.runningId);
+  if (!running) return closeSheet();
+  const end = Date.now();
+  closeSheet(); // also saves a changed temperature or note
+  db.saveEntry(running.id, { end });
+  buzz();
+  toast(`Woke up · slept ${dur(end - running.start)}`, [
+    { label: 'Undo', fn: () => db.saveEntry(running.id, { end: null }) },
+    { label: 'Edit', fn: () => openEdit(running.id) },
+  ]);
+}
+// While a sleep is running, taps on its options save at once; typed fields save when the card closes.
+function saveRunningSleepText() {
+  const sh = S.sheet, running = all().find(e => e.id === sh.runningId);
+  if (!running) return;
+  const fields = {};
+  const t = readTemp(); if (t !== (running.tempC ?? null)) fields.tempC = t;
+  const note = readNote(); if (note !== (running.note || '')) fields.note = note;
+  if (Object.keys(fields).length) db.saveEntry(running.id, fields);
+}
+function openSleep() {
+  const list = all(), running = L.runningSleep(list);
+  if (!running) return openSheet('sleep', { d: L.sleepDefaults(list) });
+  const d = Object.fromEntries(L.SLEEP_FIELDS.map(k => [k, running[k] ?? null]));
+  d.period ??= L.dayOrNight(running.start);
+  d.nightLight = !!d.nightLight;
+  openSheet('sleep', { runningId: running.id, d, note: running.note || '', showNote: !!running.note });
+}
+// Keep typed values when the card redraws after a tap.
+function keepSleepInputs() {
+  if (S.sheet.d) S.sheet.d.tempC = readTemp();
+  if (S.sheet.showNote) S.sheet.note = readNote();
+}
+function sleepDetails(d) {
+  const chips = f => `<div class="seg">${SLEEP_OPTS[f].map(([v, l]) => `<button class="chip ${d[f] === v ? 'on' : ''}" data-sl="${f}:${v}">${l}</button>`).join('')}</div>`;
+  return `<div class="daynight">
+      <button class="dn ${d.period === 'day' ? 'on' : ''}" data-sl="period:day"><span class="emoji">☀️</span>Day</button>
+      <button class="dn ${d.period === 'night' ? 'on' : ''}" data-sl="period:night"><span class="emoji">🌙</span>Night</button></div>
+    <div class="section-label">Cover</div>${chips('cover')}
+    <div class="section-label">Where</div>${chips('location')}
+    <div class="section-label">Sound</div>${chips('sound')}
+    <label class="check"><input type="checkbox" id="sl-light" ${d.nightLight ? 'checked' : ''}><span>💡 Night light on</span></label>
+    <label class="field"><span>Room temperature</span><div class="temp-row"><input type="number" inputmode="decimal" step="0.5" min="10" max="40" id="sl-temp" value="${d.tempC ?? ''}"><b>°C</b></div></label>`;
+}
+function readTemp() {
+  const v = $('#sl-temp')?.value;
+  if (v == null) return S.sheet?.d?.tempC ?? L.SLEEP_TEMP_DEFAULT;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
 }
 
 // ---------- Rendering ----------
@@ -259,6 +312,7 @@ function openSheet(kind, data = {}) {
 }
 function closeSheet(fromBack = false) {
   if (!S.sheet) return;
+  if (S.sheet.kind === 'sleep' && S.sheet.runningId) saveRunningSleepText();
   S.sheet = null;
   $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true;
   if (!fromBack) { S.ignorePop = true; history.back(); }
@@ -318,6 +372,16 @@ function drawSheet() {
       <div class="section-label">Colour (optional, pick before tapping)</div>
       <div class="timeline-chips">${Object.entries(COLORS).map(([n, c]) => `<button class="chip ${sh.color === n ? 'on' : ''}" data-color="${n}"><span class="swatch" style="background:${c}"></span>${n}</button>`).join('')}</div>
       ${noteBlock()}`;
+  } else if (sh.kind === 'sleep') {
+    const running = sh.runningId && list.find(e => e.id === sh.runningId);
+    body = `<div class="sheet-title"><h2>Sleep</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+      ${running
+        ? `<button class="sleep-go running" data-act="stopsleep"><span class="emoji">🌤️</span>Woke up · stop<small>asleep since ${clock(running.start)} · ${dur(Date.now() - running.start)}</small></button>`
+        : `<button class="sleep-go" data-act="startsleep"><span class="emoji">😴</span>Start sleep<small>starts the timer</small></button>
+           <div class="section-label">Fell asleep</div>${timeChips()}`}
+      ${sleepDetails(sh.d)}
+      ${running ? '<p class="fine">Changes are saved to this sleep as you make them.</p>' : ''}
+      ${noteBlock()}`;
   } else if (sh.kind === 'edit') body = editBody();
   else if (sh.kind === 'contact') body = contactBody();
   el.innerHTML = `<div class="grab"></div>${body}`;
@@ -344,6 +408,7 @@ function editBody() {
     ${hasEnd ? (d.end == null
       ? `<div class="field"><span>Ended</span><button class="btn wide" data-act="endnow">Still going · tap to stop now</button></div>`
       : `<label class="field"><span>Ended</span><input type="datetime-local" id="ed-end" value="${toInput(d.end)}"></label>`) : ''}
+    ${d.type === 'sleep' ? sleepDetails(d) : ''}
     ${hasMl ? `<label class="field"><span>Amount (ml)</span><input type="number" inputmode="numeric" id="ed-ml" value="${d.ml ?? ''}"></label>` : ''}
     ${d.type === 'diaper' ? `<div class="section-label">Colour</div><div class="timeline-chips">
       <button class="chip ${!d.color ? 'on' : ''}" data-dcolor="">None</button>
@@ -359,6 +424,10 @@ function readEditInputs() {
   const s = fromInput($('#ed-start')?.value); if (s) d.start = s;
   if ($('#ed-end')) d.end = fromInput($('#ed-end').value);
   if ($('#ed-ml')) d.ml = Number($('#ed-ml').value) || 0;
+  if (d.type === 'sleep') {
+    if ($('#sl-temp')) d.tempC = readTemp();
+    if ($('#sl-light') && $('#sl-light').checked !== !!d.nightLight) d.nightLight = $('#sl-light').checked;
+  }
   d.note = ($('#note')?.value ?? d.note).trim();
 }
 
@@ -369,7 +438,7 @@ function saveEdit() {
   if (d.end != null && d.end < d.start) return toast('End is before start', []);
   if (d.type === 'diaper' || (d.type === 'feed' && !L.isBreast(d))) d.end = d.start;
   const changed = {};
-  for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note']) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
+  for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note', ...(d.type === 'sleep' ? L.SLEEP_FIELDS : [])]) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
   if (Object.keys(changed).length) db.saveEntry(d.id, changed);
   closeSheet();
   if (Object.keys(changed).length) toast('Saved', []);
@@ -441,10 +510,13 @@ function renderSettings(app) {
 }
 
 function exportCsv() {
-  const rows = [['type', 'kind', 'start', 'end', 'minutes', 'ml', 'color', 'note', 'logged_by']];
+  const rows = [['type', 'kind', 'start', 'end', 'minutes', 'ml', 'color', 'note', 'logged_by',
+    'day_night', 'cover', 'location', 'sound', 'night_light', 'room_temp_c']];
   for (const e of all()) {
     rows.push([e.type, e.kind || '', new Date(e.start).toISOString(), e.end ? new Date(e.end).toISOString() : '',
-      e.end ? Math.round((e.end - e.start) / L.MIN) : '', e.ml ?? '', e.color || '', e.note || '', e.by || '']);
+      e.end ? Math.round((e.end - e.start) / L.MIN) : '', e.ml ?? '', e.color || '', e.note || '', e.by || '',
+      e.period || '', optLabel('cover', e.cover), optLabel('location', e.location), optLabel('sound', e.sound),
+      e.type === 'sleep' && e.nightLight != null ? (e.nightLight ? 'yes' : 'no') : '', e.tempC ?? '']);
   }
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -513,7 +585,19 @@ document.addEventListener('click', ev => {
   // Inside sheets
   if (ds.offset != null) {
     if (S.sheet.showNote) S.sheet.note = readNote();
+    if (S.sheet.kind === 'sleep') keepSleepInputs();
     S.sheet.startOffset = ds.offset === '' ? null : ds.offset === 'custom' ? 'custom' : +ds.offset;
+    if (S.sheet.kind === 'sleep' && !S.sheet.periodTouched) S.sheet.d.period = L.dayOrNight(sheetStart());
+    return drawSheet();
+  }
+  if (ds.sl) {
+    const [f, v] = ds.sl.split(':');
+    const edit = S.sheet.kind === 'edit';
+    if (edit) readEditInputs(); else keepSleepInputs();
+    const d = edit ? S.sheet.draft : S.sheet.d;
+    d[f] = f !== 'period' && d[f] === v ? null : v; // tap a picked option again to clear it
+    if (f === 'period') S.sheet.periodTouched = true;
+    if (!edit && S.sheet.runningId) db.saveEntry(S.sheet.runningId, { [f]: d[f] });
     return drawSheet();
   }
   if (ds.step) {
@@ -544,7 +628,9 @@ document.addEventListener('click', ev => {
   switch (ds.act) {
     case 'feed': return openSheet('feed');
     case 'diaper': return openSheet('diaper');
-    case 'sleep': return toggleSleep();
+    case 'sleep': return openSleep();
+    case 'startsleep': return startSleep();
+    case 'stopsleep': return stopSleep();
     case 'stopfeed': { const r = L.runningFeed(list); return r && stopFeed(r); }
     case 'close': return closeSheet();
     case 'shownote': S.sheet.showNote = true; drawSheet(); return $('#note')?.focus();
@@ -568,6 +654,14 @@ document.addEventListener('click', ev => {
 
 
 $('#sheet-backdrop').addEventListener('click', () => closeSheet());
+
+// Night light checkbox (sleep card and edit sheet).
+document.addEventListener('change', ev => {
+  if (ev.target.id !== 'sl-light' || !S.sheet) return;
+  if (S.sheet.kind === 'edit') { S.sheet.draft.nightLight = ev.target.checked; return; }
+  S.sheet.d.nightLight = ev.target.checked;
+  if (S.sheet.runningId) db.saveEntry(S.sheet.runningId, { nightLight: ev.target.checked });
+});
 
 async function loadOlder() {
   const to = S.olderFrom, from = to - 7 * L.DAY;

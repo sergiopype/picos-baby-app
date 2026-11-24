@@ -84,7 +84,10 @@ in Firebase, and in GitHub's encrypted secrets.
   After stopping, the message offers **Start Right** (or Left) to switch sides in one tap.
   The suggested side is the opposite of the last breast used. Bottle and Pump remember the last amount.
 - **Diaper**: tap Diaper, then Wet, Dirty or Both. Pick a colour first if you want one.
-- **Sleep**: one tap starts sleep, and the button turns into **Woke up**.
+- **Sleep**: tap Sleep to open the sleep card. **Start sleep** sits right under the title; pick the details first if you want:
+  Day ☀️ / Night 🌙 (preset from the clock, 7 AM to 7 PM is day), Cover (Swaddle, Sleeping bag, Blanket), Where (Bedside bassinet, Crib, Cot, Other),
+  Sound (Silence, White noise, Music), Night light, and Room temperature (always starts at 23 °C). Cover, place, sound and night light repeat the last sleep.
+  While asleep the big button shows **Woke up**; tap it to open the card, where details can still be changed, then **Woke up · stop**.
 - **Forgot to log?** Every sheet has "5 / 15 / 30 min ago" and "Other…" at the top.
 - **Mistake?** Every save shows **Undo** for 7 seconds. Tap any entry in the list to edit, add a note, or delete it.
 - **Contacts**: the 📞 button. Each contact has a "When to call" line and a big Call button.
