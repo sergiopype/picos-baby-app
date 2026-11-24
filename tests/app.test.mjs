@@ -53,9 +53,11 @@ await A.click('[data-act="feed"]');
 check(await A.isVisible('text=Log bottle · 80 ml'), 'Bottle remembers last amount (80 ml)');
 await A.click('[data-act="close"]');
 
-// Sleep card: details, start, live edit, stop
+// Sleep: one tap starts the timer and opens the card; details save live; stop inside the card
 await A.click('[data-act="sleep"]');
-check(await A.isVisible('[data-act="startsleep"]'), 'Sleep opens a card with the Start button');
+check(await A.isVisible('[data-act="stopsleep"]'), 'Sleep tap starts the timer and opens the card with Woke up · stop');
+check(await A.locator('[data-act="startsleep"]').count() === 0, 'No separate Start step in the card');
+check(await has(B, 'Woke up'), 'B: sees baby asleep right after the tap');
 check(await A.inputValue('#sl-temp') === '23', 'Room temperature starts at 23 °C');
 const h = new Date().getHours(), expected = h >= 7 && h < 19 ? 'day' : 'night';
 check(await A.isVisible(`.dn.on[data-sl="period:${expected}"]`), `Day/Night preselected from the clock (${expected})`);
@@ -65,12 +67,13 @@ await A.click('[data-sl="cover:swaddle"]'); // one choice only: switches from sl
 check(await A.inputValue('#sl-temp') === '22.5', 'Typed temperature survives a tap on another option');
 check(await A.locator('[data-sl^="cover:"].on').count() === 1, 'Cover allows one choice only');
 await A.screenshot({ path: shots + '/2-sleep-card.png' });
-await A.click('[data-act="startsleep"]');
-check(await has(B, 'Woke up'), 'B: sees baby asleep (Woke up button)');
+await A.click('[data-act="close"]'); // closing keeps it counting and saves the typed temperature
+check(await A.isVisible('.act.sleep.running'), 'Closing the card keeps the sleep running');
 check(await has(B, 'Sleeping… · ' + (expected === 'day' ? '☀️' : '🌙') + ' · Crib · Swaddle'), 'B: sleep row shows day/night, place and cover');
 await B.click('[data-act="sleep"]');
 check(await B.isVisible('[data-act="stopsleep"]'), 'B: card shows Woke up · stop while asleep');
-check(await B.inputValue('#sl-temp') === '22.5' && await B.isChecked('#sl-light'), 'B: card shows the details A picked');
+let seen = false; for (let i = 0; i < 20 && !seen; i++) { seen = await B.inputValue('#sl-temp') === '22.5' && await B.isChecked('#sl-light'); if (!seen) { await B.click('[data-act="close"]'); await sleep(400); await B.click('[data-act="sleep"]'); } }
+check(seen, 'B: card shows the details A picked');
 await B.click('[data-sl="sound:music"]');
 await B.click('[data-act="close"]');
 await A.click('[data-act="sleep"]');
