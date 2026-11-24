@@ -31,15 +31,20 @@ Built for one-handed use at 3 AM. Works offline. Copies everything to Notion eve
 
 ## Pump and milk stock
 
-- **Pump** has its own button. Each record is one breast. Saving gives it a code to write on the bag:
-  `BPL-001`, `BPL-002`… for the left and `BPR-001`… for the right. If the milk is split, the fridge bag keeps
-  the plain code and the freezer bag gets `-F` (`BPL-004` and `BPL-004-F`). "Switch breast" starts the other side.
+- **Pump** has its own button. Tap once to start the session timer, tap again to stop it: the card opens with
+  the session length on top and a **Left** and a **Right** section. Each side has its ml (0 = not pumped),
+  its own minutes (starts at the full session) and one or more bags. **+ Add bag** splits a side any way you
+  like; a counter shows the ml still to put in a bag. Each bag has a place (Room temp, Fridge, Freezer) and a
+  container (Bag, Bottle). Closing the card without saving keeps the session as "Finish pump".
+- **Codes**: side, number, place letter: `L-004-B`. A = room temp, B = fridge, C = freezer. When a side has
+  two or more bags in the same place, those are numbered instead: `L-004-1`, `L-004-2`, `L-004-C`.
+  Records made before this rework keep their old `BPL-`/`BPR-` codes; numbering carries on from them.
 - Numbers come from a counter in the database (`meta/milk`) taken inside a transaction, so both phones can save
   at once without clashing. With no signal the phone uses the highest number it knows + 1.
 - **Milk stock** (the line above the big buttons) lists every bag oldest first with its use-by time:
-  fridge 4 days from pumping, freezer 6 months, thawed 24 hours from thawing. Bags close to it are flagged.
+  room temp 4 hours, fridge 4 days, freezer 6 months, thawed 24 hours from thawing. Bags close to it are flagged.
   Tap a bag to thaw it, change what's left, or discard it. Bags are stored in the `milk` collection.
-- **Bottle** feeds take from stock: the fridge bag that expires first is preselected, part of a bag can be used,
+- **Bottle** feeds take from stock: the bag that expires first is preselected, part of a bag can be used,
   and any other bag can be picked. Formula is a small option for when it's needed.
 
 ## Files

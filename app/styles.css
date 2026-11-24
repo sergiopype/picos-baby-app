@@ -155,7 +155,23 @@ button { cursor: pointer; border: 0; background: none; }
 .expiry.expired { color: var(--danger); }
 .seg.src { margin: 10px 0 4px; }
 .chip.small { font-size: 13px; opacity: .8; }
-.amount .save.pumpsave { background: var(--pump); }
+.amount .save.pumpsave, .save.pumpsave { background: var(--pump); }
+.wide-save { width: 100%; height: 60px; border-radius: 16px; color: var(--on-accent); font-weight: 800; font-size: 18px; }
+.pside { border: 3px solid transparent; }
+.pside.on { border-color: color-mix(in srgb, var(--pump) 55%, transparent); }
+.num-in { display: inline-flex; align-items: center; gap: 4px; }
+.num-in button { width: 44px; height: 44px; border-radius: 12px; background: var(--card-2); font-size: 22px; font-weight: 700; }
+.num-in input { width: 64px; height: 44px; text-align: center; font-size: 18px; font-weight: 800; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.num-in span { font-size: 14px; color: var(--muted); }
+.num-in.big input { width: 76px; font-size: 22px; }
+.bag { background: var(--card-2); border-radius: 14px; padding: 10px; margin-top: 8px; }
+.bag-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.bag-top b { flex: 1; }
+.bag .rm { width: 36px; height: 36px; border-radius: 10px; background: var(--card); color: var(--muted); }
+.bag .chip { background: var(--card); }
+.counter { font-weight: 700; color: var(--diaper); margin: 8px 0 0; }
+.counter.off { color: var(--warn); }
+.label-card.room { border-left-color: var(--warn); }
 .save:disabled { opacity: .6; }
 .act.running { outline: 4px solid var(--text); outline-offset: -4px; }
 
@@ -279,3 +295,6 @@ button { cursor: pointer; border: 0; background: none; }
 .temp-row input { max-width: 120px; font-size: 20px; font-weight: 700; text-align: center; }
 .temp-row b { font-size: 18px; }
 .fine { color: var(--muted); font-size: 14px; margin: 0 0 10px; }
+.bag .seg { display: flex; gap: 6px; }
+.bag .seg .chip { flex: 1; white-space: nowrap; padding-left: 6px; padding-right: 6px; justify-content: center; }
+.label-card .code { white-space: nowrap; font-size: 26px; }
