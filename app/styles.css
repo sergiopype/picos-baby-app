@@ -9,13 +9,16 @@
   --feed: #d9792a;
   --diaper: #2f9a83;
   --sleep: #6e5ce0;
+  --pump: #c2557a;
+  --warn: #b7791f;
   --danger: #d64545;
   --ok: #7ccf86;
   --sergio: #4f8ff0;
   --anarita: #e070aa;
   --on-accent: #ffffff;
   --radius: 18px;
-  --bar-h: 112px;
+  --bar-h: 84px;
+  --bar-total: 236px; /* stock line + two rows of buttons */
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -28,6 +31,8 @@
   --feed: #f0a05a;
   --diaper: #6cc4b0;
   --sleep: #9c8cf0;
+  --pump: #ec8db0;
+  --warn: #e7b04a;
   --danger: #ef6b6b;
   --sergio: #6aa8ff;
   --anarita: #f08cc0;
@@ -47,7 +52,7 @@ button { cursor: pointer; border: 0; background: none; }
 [hidden] { display: none !important; }
 
 /* ---------- Layout ---------- */
-.screen { max-width: 560px; margin: 0 auto; padding: 12px 16px calc(var(--bar-h) + 24px + env(safe-area-inset-bottom)); }
+.screen { max-width: 560px; margin: 0 auto; padding: 12px 16px calc(var(--bar-total) + 24px + env(safe-area-inset-bottom)); }
 .topbar { display: flex; align-items: center; gap: 8px; padding: 8px 0 12px; }
 .topbar h1 { font-size: 22px; margin: 0; line-height: 1.1; }
 .topbar .sub { color: var(--muted); font-size: 14px; }
@@ -101,18 +106,57 @@ button { cursor: pointer; border: 0; background: none; }
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   background: linear-gradient(to top, var(--bg) 75%, transparent);
 }
-.bar-inner { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.bar-wrap { max-width: 560px; margin: 0 auto; }
+.bar-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stockline {
+  width: 100%; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px 12px;
+  border-radius: 14px; background: var(--card); font-size: 15px; text-align: left; box-shadow: 0 2px 8px rgb(0 0 0 / .08);
+}
+.stockline .emoji { font-size: 18px; }
+.stockline > span:nth-child(2) { flex: 1; }
+.chev { color: var(--muted); font-size: 20px; margin-left: auto; }
+.flag { font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 8px; color: #fff; white-space: nowrap; }
+.flag.soon { background: var(--warn); }
+.flag.bad { background: var(--danger); }
 .act {
   height: var(--bar-h); border-radius: 22px; background: var(--c); color: var(--on-accent);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  font-weight: 800; font-size: 20px; box-shadow: 0 6px 18px rgb(0 0 0 / .25);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  font-weight: 800; font-size: 19px; box-shadow: 0 6px 18px rgb(0 0 0 / .25);
 }
-.act .emoji { font-size: 30px; line-height: 1; }
-.act .hint { font-size: 13px; font-weight: 600; opacity: .85; font-variant-numeric: tabular-nums; }
+.act .emoji { font-size: 24px; line-height: 1; }
+.act .hint { min-height: 16px; font-size: 13px; font-weight: 600; opacity: .85; font-variant-numeric: tabular-nums; }
 .act:active, .big-choice:active { transform: scale(.97); }
 .act.feed { --c: var(--feed); }
 .act.diaper { --c: var(--diaper); }
 .act.sleep { --c: var(--sleep); }
+.act.pump { --c: var(--pump); }
+
+/* ---------- Pump and milk stock ---------- */
+.milkrow {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--card);
+  border-radius: 14px; padding: 10px 12px; margin-bottom: 6px; border: 3px solid transparent; min-height: 60px;
+}
+.milkrow.on { border-color: var(--feed); background: color-mix(in srgb, var(--feed) 12%, var(--card)); }
+.milkrow .code { font: 800 17px/1.1 ui-monospace, "Roboto Mono", monospace; min-width: 96px; }
+.milkrow .mid { flex: 1; min-width: 0; }
+.milkrow .mid small { display: block; color: var(--muted); font-size: 13px; }
+.milkrow.soon .mid small { color: var(--warn); font-weight: 600; }
+.milkrow.expired .mid small { color: var(--danger); font-weight: 700; }
+.milkrow .take { font-weight: 800; color: var(--feed); white-space: nowrap; }
+.label-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--card);
+  border-radius: 16px; padding: 14px 16px; margin-bottom: 8px; border-left: 6px solid var(--feed);
+}
+.label-card.freezer { border-left-color: #4f8ff0; }
+.label-card .code { font: 800 30px/1 ui-monospace, "Roboto Mono", monospace; letter-spacing: .02em; }
+.code-title { font-family: ui-monospace, "Roboto Mono", monospace; font-size: 28px !important; }
+.expiry { font-weight: 700; margin: 0 0 12px; }
+.expiry.soon { color: var(--warn); }
+.expiry.expired { color: var(--danger); }
+.seg.src { margin: 10px 0 4px; }
+.chip.small { font-size: 13px; opacity: .8; }
+.amount .save.pumpsave { background: var(--pump); }
+.save:disabled { opacity: .6; }
 .act.running { outline: 4px solid var(--text); outline-offset: -4px; }
 
 /* ---------- Bottom sheet ---------- */
@@ -199,11 +243,13 @@ button { cursor: pointer; border: 0; background: none; }
 
 /* ---------- Toast ---------- */
 #toast {
-  position: fixed; left: 12px; right: 12px; bottom: calc(var(--bar-h) + 28px + env(safe-area-inset-bottom)); z-index: 20;
+  position: fixed; left: 12px; right: 12px; bottom: calc(var(--bar-total) + 12px + env(safe-area-inset-bottom)); z-index: 20;
   max-width: 536px; margin: 0 auto; background: var(--text); color: var(--bg); border-radius: 16px;
   padding: 10px 10px 10px 16px; display: flex; align-items: center; gap: 8px; font-weight: 600;
   box-shadow: 0 8px 24px rgb(0 0 0 / .3);
 }
+/* With a card open, the toast sits at the top so it never covers the card's buttons. */
+#sheet:not([hidden]) ~ #toast { top: calc(12px + env(safe-area-inset-top)); bottom: auto; }
 #toast .msg { flex: 1; }
 #toast button { color: var(--bg); font-weight: 800; padding: 10px 12px; min-height: 44px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 12%, transparent); }
 
