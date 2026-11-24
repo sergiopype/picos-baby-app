@@ -93,7 +93,8 @@ function bottleSource(e) {
   if (e.uses?.length) return ` · ${e.uses.map(u => u.code).join(' + ')}`;
   return '';
 }
-const PLACE = { fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
 const shortDate = t => new Date(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 // "in 3 d", "in 5 h", "expired 2 h ago", "in 4 months"
 function untilText(t, now = Date.now()) {
@@ -110,7 +111,11 @@ function describe(e) {
     if (e.kind === 'bottle') return { ic: '🍼', what: `Bottle · ${e.ml || 0} ml${bottleSource(e)}` };
     return { ic: '🫙', what: `Pumped · ${e.ml || 0} ml` }; // logged before Pump had its own button
   }
-  if (e.type === 'pump') return { ic: '🫙', what: `Pumped ${side(e.kind)} · ${e.ml || 0} ml${e.code ? ` · ${e.code}` : ''}` };
+  if (e.type === 'pump') {
+    const m = e.end > e.start ? ` · ${dur(e.end - e.start)}` : '';
+    return { ic: '🫙', what: `Pumped ${side(e.kind)} · ${e.ml || 0} ml${m}${e.code ? ` · ${e.code}` : ''}` };
+  }
+  if (e.type === 'pumpsession') return { ic: '🫙', what: e.end == null ? 'Pumping…' : `Pump ${dur(e.end - e.start)} · not saved yet, tap to finish` };
   if (e.type === 'diaper') {
     const k = { wet: 'Wet', dirty: 'Dirty', both: 'Wet + dirty' }[e.kind] || 'Diaper';
     return { ic: '🧷', what: `${k}${e.color ? ` · ${e.color}` : ''}` };
@@ -144,7 +149,7 @@ function logEntry(fields, { toastText, undo = true, extra = [] } = {}) {
     ml: fields.ml ?? null, color: fields.color ?? null, note: fields.note ?? '', by: S.me, createdAt: now, deleted: false };
   if (e.type === 'diaper' || (e.type === 'feed' && !['left', 'right'].includes(e.kind))) e.end = e.start;
   if (e.type === 'sleep') for (const k of L.SLEEP_FIELDS) e[k] = fields[k] ?? null;
-  if (e.type === 'pump') { e.end = e.start; Object.assign(e, { code: fields.code ?? null, seq: fields.seq ?? null, fridgeMl: fields.fridgeMl ?? 0, freezerMl: fields.freezerMl ?? 0, portions: fields.portions ?? [] }); }
+  if (e.type === 'pump') { e.end = fields.end ?? e.start; Object.assign(e, { code: fields.code ?? null, seq: fields.seq ?? null, bags: fields.bags ?? [], portions: fields.portions ?? [], sessionId: fields.sessionId ?? null }); }
   if (e.kind === 'bottle') { e.source = fields.source ?? null; e.uses = fields.uses ?? []; }
   db.saveEntry(id, e);
   if (e.uses?.length) for (const u of e.uses) db.adjustMilk(u.id, -u.ml);
@@ -152,7 +157,7 @@ function logEntry(fields, { toastText, undo = true, extra = [] } = {}) {
   const actions = [];
   if (undo) actions.push({ label: 'Undo', fn: () => { db.saveEntry(id, { deleted: true }); returnMilk(e); } });
   actions.push(...extra(id));
-  if (e.type !== 'pump') actions.push({ label: 'Note', fn: () => openEdit(id, true) });
+  if (e.type !== 'pump' && e.type !== 'pumpsession') actions.push({ label: 'Note', fn: () => openEdit(id, true) });
   toast(toastText, actions);
   return id;
 }
@@ -300,8 +305,12 @@ function renderHome(app) {
   const st = L.stockTotals(S.milk, now);
   const flag = st.expired ? `<span class="flag bad">${st.expired} expired</span>` : st.soon ? `<span class="flag soon">${st.soon} use soon</span>` : '';
   const stockLine = `<button class="stockline" data-nav="stock"><span class="emoji">🧊</span>
-    ${st.fridge || st.freezer ? `<span>Fridge <b>${st.fridge} ml</b> · Freezer <b>${st.freezer} ml</b></span>` : '<span>Milk stock · empty</span>'}${flag}<span class="chev">›</span></button>`;
-  const lastP = L.lastPump(list);
+    ${st.room || st.fridge || st.freezer ? `<span>${st.room ? `Room <b>${st.room} ml</b> · ` : ''}Fridge <b>${st.fridge} ml</b> · Freezer <b>${st.freezer} ml</b></span>` : '<span>Milk stock · empty</span>'}${flag}<span class="chev">›</span></button>`;
+  const lastP = L.lastPump(list), ps = L.openPumpSession(list);
+  const pumpBtn = ps && ps.end == null
+    ? `<button class="act pump running" data-act="pump"><span class="emoji">⏹️</span>Stop pump<span class="hint" data-timer="${ps.start}">${clockTimer(now - ps.start)}</span></button>`
+    : ps ? `<button class="act pump running" data-act="pump"><span class="emoji">🫙</span>Finish pump<span class="hint">not saved · ${dur(ps.end - ps.start)}</span></button>`
+    : `<button class="act pump" data-act="pump"><span class="emoji">🫙</span>Pump<span class="hint">${lastP ? agoLong(lastP.end ?? lastP.start) : 'starts timer'}</span></button>`;
 
   app.innerHTML = `<div class="screen">
     <div class="topbar"><div class="grow"><h1>${esc(S.baby?.name || 'Baby')}</h1>
@@ -313,7 +322,7 @@ function renderHome(app) {
     <button class="more" data-act="older">Show earlier days</button>
   </div>
   <div class="bar"><div class="bar-wrap">${stockLine}<div class="bar-inner">${feedBtn}
-    <button class="act pump" data-act="pump"><span class="emoji">🫙</span>Pump<span class="hint">${lastP ? agoLong(lastP.start) : ''}</span></button>
+    ${pumpBtn}
     ${sleepBtn}
     <button class="act diaper" data-act="diaper"><span class="emoji">🧷</span>Diaper<span class="hint" ${diaper ? `data-ago="${diaper.start}"` : ''}>${diaper ? agoLong(diaper.start) : ''}</span></button>
     </div></div></div>`;
@@ -430,7 +439,7 @@ function milkRow(p, attrs, on, extra = '') {
   const f = L.milkFlag(p);
   return `<button class="milkrow ${on ? 'on' : ''} ${f}" ${attrs}>
     <span class="code">${esc(p.code)}</span>
-    <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]}
+    <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]}${p.container ? ` · ${CONTAINER[p.container]}` : ''}
       <small>pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span>${extra}</button>`;
 }
 function bottleSourceBlock() {
@@ -464,89 +473,151 @@ function retakeMilk(e) {
 }
 
 // ---------- Pump ----------
-function openPump(over = {}) {
-  const list = all(), last = L.lastPump(list);
-  const recent = last && Date.now() - last.start < 2 * L.HOUR;
-  const ml = over.ml ?? S.sheet?.ml ?? (last?.ml || 60);
-  const where = over.store ?? S.sheet?.store ?? (store.get('pumpStore') || 'fridge');
-  const data = { side: recent ? (last.kind === 'left' ? 'right' : 'left') : 'left', ml, store: where,
-    freezer: where === 'freezer' ? ml : where === 'fridge' ? 0 : Math.round(ml / 2 / 5) * 5, ...over };
-  if (S.sheet) { S.sheet = { kind: 'pump', start: null, note: '', showNote: false, ...data }; return drawSheet(); }
-  openSheet('pump', data);
+// Tap 1 starts a session timer (no card). Tap 2 stops it and opens the card, where each breast gets
+// its ml, its own minutes and its bags. Closing the card without saving keeps the session as
+// "Finish pump" so nothing is lost.
+function pumpTap() {
+  const ps = L.openPumpSession(all());
+  if (!ps) {
+    const id = logEntry({ type: 'pumpsession' }, { toastText: 'Pumping started', extra: () => [] });
+    return id;
+  }
+  if (ps.end == null) {
+    const end = Date.now();
+    db.saveEntry(ps.id, { end });
+    buzz();
+    return openPumpCard({ ...ps, end });
+  }
+  openPumpCard(ps);
+}
+function newBag(ml) { return { ml, place: store.get('pumpPlace') || 'fridge', container: store.get('pumpContainer') || 'bag' }; }
+function openPumpCard(ps) {
+  const mins = Math.max(1, Math.round((ps.end - ps.start) / L.MIN));
+  const sideState = () => ({ ml: 0, min: mins, bags: [newBag(0)] });
+  openSheet('pump', { sessionId: ps.id, pStart: ps.start, pEnd: ps.end, sides: { left: sideState(), right: sideState() }, note: ps.note || '', showNote: !!ps.note, confirmDiscard: false });
+}
+function pumpSideBlock(k) {
+  const sd = S.sheet.sides[k];
+  const many = sd.bags.length > 1;
+  const assigned = sd.bags.reduce((a, b) => a + (b.ml || 0), 0);
+  const bag = (b, i) => `<div class="bag">
+      <div class="bag-top"><b>${many ? `Bag ${i + 1}` : 'Storage'}</b>
+        ${many ? `<span class="num-in"><button data-pstep="${k}.bags.${i}.ml:-5">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.bags.${i}.ml" value="${b.ml || 0}"><span>ml</span><button data-pstep="${k}.bags.${i}.ml:5">+</button></span>
+          <button class="rm" data-rmbag="${k}:${i}" aria-label="Remove bag">✕</button>` : ''}</div>
+      <div class="seg">${['room', 'fridge', 'freezer'].map(v => `<button class="chip ${b.place === v ? 'on' : ''}" data-pplace="${k}:${i}:${v}">${PLACE[v]}</button>`).join('')}</div>
+      <div class="seg" style="margin-top:6px">${['bag', 'bottle'].map(v => `<button class="chip ${b.container === v ? 'on' : ''}" data-pcont="${k}:${i}:${v}">${CONTAINER[v]}</button>`).join('')}</div>
+    </div>`;
+  const left = sd.ml - assigned;
+  return `<div class="amount pside ${sd.ml > 0 ? 'on' : ''}"><div class="top"><span class="label">${side(k)}</span>
+      <span class="num-in big"><button data-pstep="${k}.ml:-5">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.ml" value="${sd.ml}"><span>ml</span><button data-pstep="${k}.ml:5">+</button></span></div>
+    ${sd.ml > 0 ? `<div class="top" style="margin-top:8px"><span class="fine" style="margin:0">Minutes</span>
+      <span class="num-in"><button data-pstep="${k}.min:-1">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.min" value="${sd.min}"><span>min</span><button data-pstep="${k}.min:1">+</button></span></div>
+      ${sd.bags.map(bag).join('')}
+      ${many ? `<p class="counter ${left ? 'off' : ''}" id="cnt-${k}">${left > 0 ? `${left} ml still to put in a bag` : left < 0 ? `${-left} ml too many` : 'All ml in bags ✓'}</p>` : ''}
+      <button class="notebtn" data-addbag="${k}">+ Add bag</button>` : '<p class="fine" style="margin:6px 0 0">0 ml = not pumped</p>'}
+  </div>`;
 }
 function pumpBody() {
   const sh = S.sheet;
-  const parts = L.splitPortions(sh.ml, sh.freezer);
-  const fridgeMl = sh.ml - Math.min(sh.ml, sh.freezer);
-  return `<div class="sheet-title"><h2>Pump</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-    ${timeChips()}
-    <div class="choices" style="--c:var(--pump)">${['left', 'right'].map(k => `<button class="big-choice ${sh.side === k ? 'suggested' : ''}" data-pside="${k}">
-      <span class="emoji">🫙</span>${side(k)}<small>${sh.side === k ? 'selected' : 'tap to pick'}</small></button>`).join('')}</div>
-    <div class="amount"><div class="top"><span class="label">Pumped</span>
-      <div class="stepper"><button data-step="ml:-5">−</button><span class="val">${sh.ml} ml</span><button data-step="ml:5">+</button></div></div>
-      <div class="section-label">Where does it go?</div>
-      <div class="seg">${[['fridge', 'Fridge'], ['freezer', 'Freezer'], ['split', 'Split']].map(([v, l]) => `<button class="chip ${sh.store === v ? 'on' : ''}" data-store="${v}">${l}</button>`).join('')}</div>
-      ${sh.store === 'split' ? `<div class="top" style="margin-top:10px"><span class="label">🧊 Freezer</span>
-        <div class="stepper"><button data-step="freezer:-5">−</button><span class="val">${Math.min(sh.freezer, sh.ml)} ml</span><button data-step="freezer:5">+</button></div></div>
-        <p class="fine" style="margin:6px 0 0">Fridge gets the other ${fridgeMl} ml.</p>` : ''}
-      <p class="fine">${parts.length ? parts.map(([pl, ml]) => `${PLACE[pl]} ${ml} ml${pl === 'freezer' ? ' (code ends in -F)' : ''}`).join(' · ') + '. The code to write on the bag shows after saving.' : 'Nothing to store.'}</p>
-      <button class="save pumpsave" data-act="savepump" ${sh.saving ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save ${side(sh.side)} · ${sh.ml} ml`}</button></div>
-    ${noteBlock()}`;
+  sh.needsRedraw = false;
+  for (const k of ['left', 'right']) sh.sides[k].shown = sh.sides[k].ml > 0;
+  const problem = ['left', 'right'].map(k => L.sideProblem(sh.sides[k]) && `${side(k)}: ${L.sideProblem(sh.sides[k])}`).filter(Boolean)[0];
+  const total = sh.sides.left.ml + sh.sides.right.ml;
+  return `<div class="sheet-title"><h2>Pump · ${dur(sh.pEnd - sh.pStart)}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+    ${pumpSideBlock('left')}${pumpSideBlock('right')}
+    ${noteBlock()}
+    <p class="fine" id="pump-problem">${problem || (total ? 'The codes to write on the bags show after saving.' : 'Add the ml for at least one side.')}</p>
+    <button class="save pumpsave wide-save" data-act="savepump" ${sh.saving || problem || !total ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save · ${total} ml`}</button>
+    <button class="btn danger wide" style="margin-top:10px" data-act="discardsession">${sh.confirmDiscard ? 'Tap again to discard this session' : 'Discard session'}</button>`;
+}
+// Number fields in the pump card update the state as you type (no redraw, so the keyboard stays up).
+function pumpInput(el) {
+  const path = el.dataset.pin.split('.');
+  const v = Math.max(0, Math.round(Number(el.value) || 0));
+  let o = S.sheet.sides;
+  for (const k of path.slice(0, -1)) o = o[k];
+  o[path.at(-1)] = v;
+  const [k, f] = path;
+  if (f === 'ml' && path.length === 2) {
+    const sd = S.sheet.sides[k];
+    if (sd.bags.length === 1) sd.bags[0].ml = v;
+    if ((v > 0) !== !!sd.shown) S.sheet.needsRedraw = true; // bags appear/disappear
+  }
 }
 async function savePump() {
   const sh = S.sheet;
   if (sh.saving) return;
-  const start = sheetStart(), note = readNote();
-  sh.note = note; sh.saving = true; drawSheet();
-  const parts = L.splitPortions(sh.ml, sh.freezer);
-  let code = null, seq = null, offline = false;
-  if (parts.length) {
-    ({ seq, offline } = await db.nextPumpSeq(sh.side, L.maxSeq(all())[sh.side]));
-    code = L.pumpCode(sh.side, seq);
+  sh.note = readNote(); sh.saving = true; drawSheet();
+  const labels = [], made = [];
+  let offline = false;
+  for (const k of ['left', 'right']) {
+    const sd = sh.sides[k];
+    if (!(sd.ml > 0)) continue;
+    if (sd.bags.length === 1) sd.bags[0].ml = sd.ml;
+    const r = await db.nextPumpSeq(k, L.maxSeq(all())[k]);
+    offline ||= r.offline;
+    const code = L.pumpCode(k, r.seq), codes = L.bagCodes(code, sd.bags);
+    const end = Math.min(sh.pEnd, sh.pStart + sd.min * L.MIN);
+    const portions = sd.bags.map((b, i) => {
+      const id = db.newMilkId();
+      db.saveMilk(id, { code: codes[i], pumpCode: code, side: k, place: b.place, container: b.container, ml: b.ml, left: b.ml, pumpedAt: end,
+        thawedAt: null, by: S.me, note: '', deleted: false, discarded: false, createdAt: Date.now() });
+      labels.push({ side: k, code: codes[i], place: b.place, container: b.container, ml: b.ml });
+      return id;
+    });
+    const bags = sd.bags.map((b, i) => ({ code: codes[i], place: b.place, container: b.container, ml: b.ml }));
+    const id = db.newId();
+    db.saveEntry(id, { id, type: 'pump', kind: k, start: sh.pStart, end, ml: sd.ml, code, seq: r.seq, bags, portions, sessionId: sh.sessionId,
+      note: sh.note, by: S.me, createdAt: Date.now(), deleted: false, color: null });
+    made.push({ id, portions });
+    const last = sd.bags.at(-1); store.set('pumpPlace', last.place); store.set('pumpContainer', last.container);
   }
-  const portions = parts.map(([place, ml]) => {
-    const id = db.newMilkId();
-    db.saveMilk(id, { code: L.portionCode(code, place), pumpCode: code, side: sh.side, place, ml, left: ml, pumpedAt: start,
-      thawedAt: null, by: S.me, note: '', deleted: false, discarded: false, createdAt: Date.now() });
-    return { id, place, ml, code: L.portionCode(code, place) };
-  });
-  store.set('pumpStore', sh.store);
-  const fridgeMl = parts.find(p => p[0] === 'fridge')?.[1] || 0, freezerMl = parts.find(p => p[0] === 'freezer')?.[1] || 0;
-  logEntry({ type: 'pump', kind: sh.side, start, ml: sh.ml, note, code, seq, fridgeMl, freezerMl, portions: portions.map(p => p.id) },
-    { toastText: `${side(sh.side)} · ${sh.ml} ml saved${code ? ` · ${code}` : ''}`, extra: () => [] });
+  db.saveEntry(sh.sessionId, { deleted: true });
+  buzz();
+  toast(`Pump saved · ${labels.map(l => l.code).join(', ')}`, [{ label: 'Undo', fn: () => {
+    for (const m of made) { db.saveEntry(m.id, { deleted: true }); for (const pid of m.portions) db.saveMilk(pid, { deleted: true }); }
+    db.saveEntry(sh.sessionId, { deleted: false });
+  } }]);
   if (!S.sheet) return; // closed while saving
-  S.sheet = { kind: 'pumped', side: sh.side, ml: sh.ml, store: sh.store, freezer: sh.freezer, labels: portions, offline, code };
+  S.sheet = { kind: 'pumped', labels, offline, total: sh.sides.left.ml + sh.sides.right.ml, minutes: Math.round((sh.pEnd - sh.pStart) / L.MIN) };
   drawSheet();
 }
 function pumpedBody() {
-  const sh = S.sheet, other = sh.side === 'left' ? 'right' : 'left';
-  return `<div class="sheet-title"><h2>Saved · ${side(sh.side)} ${sh.ml} ml</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-    ${sh.labels.length ? `<div class="section-label">Write on the bag</div>
-      ${sh.labels.map(l => `<div class="label-card ${l.place}"><span class="code">${esc(l.code)}</span><span>${PLACE[l.place]} · ${l.ml} ml</span></div>`).join('')}`
-      : '<p class="fine">Nothing stored, so no bag code.</p>'}
-    ${sh.offline ? '<p class="fine">No signal, so this code was numbered on this phone. It only clashes if the other phone saved the same breast while offline too.</p>' : ''}
-    <div class="btn-row" style="margin-top:14px"><button class="btn primary" data-act="switchbreast">Switch breast · ${side(other)}</button>
-      <button class="btn" data-act="close">Done</button></div>`;
+  const sh = S.sheet;
+  const group = k => sh.labels.filter(l => l.side === k);
+  return `<div class="sheet-title"><h2>Saved · ${sh.total} ml</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+    <div class="section-label">Write on the bag${sh.labels.length > 1 ? 's' : ''}</div>
+    ${['left', 'right'].filter(k => group(k).length).map(k => `<div class="fine" style="margin:8px 0 4px"><b>${side(k)}</b></div>
+      ${group(k).map(l => `<div class="label-card ${l.place}"><span class="code">${esc(l.code)}</span><span>${PLACE[l.place]} · ${CONTAINER[l.container]} · ${l.ml} ml</span></div>`).join('')}`).join('')}
+    ${sh.offline ? '<p class="fine">No signal, so the numbers were given on this phone. They only clash if the other phone saved the same breast while offline too.</p>' : ''}
+    <button class="btn primary wide" style="margin-top:14px" data-act="close">Done</button>`;
+}
+function discardSession() {
+  const id = S.sheet.sessionId;
+  db.saveEntry(id, { deleted: true });
+  closeSheet();
+  toast('Pump session discarded', [{ label: 'Undo', fn: () => db.saveEntry(id, { deleted: false }) }]);
 }
 
 // ---------- Milk stock ----------
 function renderStock(app) {
   const stock = L.stockList(S.milk), st = L.stockTotals(S.milk);
-  const fridge = stock.filter(L.inFridge), frozen = stock.filter(p => !L.inFridge(p));
+  const room = stock.filter(p => p.place === 'room'), fridge = stock.filter(p => L.inFridge(p) && p.place !== 'room'), frozen = stock.filter(p => !L.inFridge(p));
   const section = (name, list, empty) => `<div class="day">${name} · ${list.reduce((a, p) => a + p.left, 0)} ml</div>
     ${list.length ? list.map(p => milkRow(p, `data-milk="${p.id}"`, false, `${S.milkPending.has(p.id) ? '<span class="waiting-mark">⏳</span>' : ''}<span class="chev">›</span>`)).join('') : `<div class="empty" style="padding:12px">${empty}</div>`}`;
   app.innerHTML = `<div class="screen" style="padding-bottom:40px">
     <div class="topbar"><button class="iconbtn" data-nav="home" aria-label="Back">←</button><div class="grow"><h1>Milk stock</h1>
       <div class="sub">${st.fridge + st.freezer} ml in ${stock.length} bag${stock.length === 1 ? '' : 's'}${st.expired ? ` · <span class="flag bad">${st.expired} expired</span>` : ''}${st.soon ? ` · <span class="flag soon">${st.soon} use soon</span>` : ''}</div></div></div>
+    ${room.length ? section('Room temp', room, '') : ''}
     ${section('Fridge', fridge, 'Nothing in the fridge.')}
     ${section('Freezer', frozen, 'Nothing in the freezer.')}
-    <p class="fine" style="margin-top:18px">Oldest first. Fridge milk keeps ${L.MILK_RULES.fridgeDays} days from pumping, frozen milk ${L.MILK_RULES.freezerMonths} months, and thawed milk ${L.MILK_RULES.thawedHours} hours from thawing. Tap a bag to thaw it, change what's left, or discard it.</p>
+    <p class="fine" style="margin-top:18px">Oldest first. Room temperature milk keeps ${L.MILK_RULES.roomHours} hours, fridge milk ${L.MILK_RULES.fridgeDays} days from pumping, frozen milk ${L.MILK_RULES.freezerMonths} months, and thawed milk ${L.MILK_RULES.thawedHours} hours from thawing. Tap a bag to thaw it, change what's left, or discard it.</p>
   </div>`;
 }
 function milkBody() {
   const p = S.sheet.draft, f = L.milkFlag(p);
   return `<div class="sheet-title"><h2 class="code-title">${esc(p.code)}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-    <p class="fine" style="margin-top:0">${side(p.side)} breast · ${PLACE[p.place]} · pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)}${p.thawedAt ? ` · thawed ${shortDate(p.thawedAt)}, ${clock(p.thawedAt)}` : ''}</p>
+    <p class="fine" style="margin-top:0">${side(p.side)} breast · ${PLACE[p.place]}${p.container ? ` · ${CONTAINER[p.container]}` : ''} · pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)}${p.thawedAt ? ` · thawed ${shortDate(p.thawedAt)}, ${clock(p.thawedAt)}` : ''}</p>
     <p class="expiry ${f}">${f === 'expired' ? 'Expired' : 'Use by'} ${shortDate(L.milkExpiry(p))}, ${clock(L.milkExpiry(p))} (${untilText(L.milkExpiry(p))})</p>
     <label class="field"><span>Milk left (ml, of ${p.ml})</span><input type="number" inputmode="numeric" id="mk-left" value="${p.left}"></label>
     <label class="field"><span>Note</span><textarea id="mk-note">${esc(p.note)}</textarea></label>
@@ -588,12 +659,13 @@ function editBody() {
   const d = S.sheet.draft;
   const kinds = d.type === 'feed' ? [['left', 'Left'], ['right', 'Right'], ['bottle', 'Bottle'], ...(d.kind === 'pump' ? [['pump', 'Pump']] : [])]
     : d.type === 'diaper' ? [['wet', 'Wet'], ['dirty', 'Dirty'], ['both', 'Both']] : [];
-  const hasEnd = d.type === 'sleep' || L.isBreast(d);
+  const hasEnd = d.type === 'sleep' || L.isBreast(d) || (d.type === 'pump' && d.end != null && d.end !== d.start);
   const hasMl = d.type === 'feed' && (d.kind === 'bottle' || d.kind === 'pump');
   const title = { feed: 'Edit feed', diaper: 'Edit diaper', sleep: 'Edit sleep', pump: `Edit pump${d.code ? ` · ${d.code}` : ''}` }[d.type];
   const milkInfo = d.type === 'pump'
-    ? `<p class="fine">${side(d.kind)} breast · ${d.ml || 0} ml${d.fridgeMl ? ` · fridge ${d.fridgeMl} ml (${esc(d.code)})` : ''}${d.freezerMl ? ` · freezer ${d.freezerMl} ml (${esc(d.code)}-F)` : ''}.
-        Changing the time also moves the expiry dates. To change amounts, open the bag in Milk stock. Deleting this removes its bags from stock.</p>`
+    ? `<p class="fine">${side(d.kind)} breast · ${d.ml || 0} ml${d.bags?.length ? ` · ${d.bags.map(b => `${esc(b.code)} ${PLACE[b.place]} ${b.ml} ml`).join(', ')}`
+        : `${d.fridgeMl ? ` · fridge ${d.fridgeMl} ml (${esc(d.code)})` : ''}${d.freezerMl ? ` · freezer ${d.freezerMl} ml (${esc(d.code)}-F)` : ''}`}.
+        Changing the end time also moves the use-by dates. To change amounts, open the bag in Milk stock. Deleting this removes its bags from stock.</p>`
     : d.kind === 'bottle' && d.uses?.length
       ? `<p class="fine">Took ${d.uses.map(u => `${u.ml} ml from ${esc(u.code)}`).join(', ')}. Changing the amount here doesn't change the stock; deleting puts the milk back.</p>`
       : d.kind === 'bottle' && d.source === 'formula' ? '<p class="fine">Formula</p>' : '';
@@ -635,7 +707,7 @@ function saveEdit() {
   const changed = {};
   for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note', ...(d.type === 'sleep' ? L.SLEEP_FIELDS : [])]) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
   if (Object.keys(changed).length) db.saveEntry(d.id, changed);
-  if (d.type === 'pump' && 'start' in changed) for (const pid of d.portions || []) db.saveMilk(pid, { pumpedAt: d.start });
+  if (d.type === 'pump' && ('start' in changed || 'end' in changed)) for (const pid of d.portions || []) db.saveMilk(pid, { pumpedAt: d.end ?? d.start });
   closeSheet();
   if (Object.keys(changed).length) toast('Saved', []);
 }
@@ -774,7 +846,11 @@ document.addEventListener('click', ev => {
   if (ds.toast != null) { $('#toast').hidden = true; return toastActions[+ds.toast]?.fn(); }
   if (ds.setup) return finishSetup(ds.setup);
   if (ds.nav) { if (ds.nav !== 'home') history.pushState({ view: ds.nav }, ''); else if (S.view !== 'home') return history.back(); S.view = ds.nav; window.scrollTo(0, 0); return render(); }
-  if (ds.edit) return openEdit(ds.edit);
+  if (ds.edit) {
+    const e = list.find(x => x.id === ds.edit);
+    if (e?.type === 'pumpsession') return e.end == null ? undefined : openPumpCard(e);
+    return openEdit(ds.edit);
+  }
   if (ds.themePick) { store.set('theme', ds.themePick); applyTheme(); return render(); }
   if (ds.me) { S.me = ds.me; store.set('me', ds.me); return render(); }
   if (ds.contact) { const c = S.contacts.find(x => x.id === ds.contact); return openSheet('contact', { draft: { ...c }, confirmDelete: false }); }
@@ -809,10 +885,6 @@ document.addEventListener('click', ev => {
     const [k, d] = ds.step.split(':');
     if (S.sheet.showNote) S.sheet.note = readNote();
     S.sheet[k] = Math.max(0, S.sheet[k] + +d);
-    if (S.sheet.kind === 'pump') {
-      const sh = S.sheet;
-      sh.freezer = sh.store === 'freezer' ? sh.ml : sh.store === 'fridge' ? 0 : Math.min(sh.freezer, sh.ml);
-    }
     return drawSheet();
   }
   if (ds.color) { S.sheet.color = S.sheet.color === ds.color ? null : ds.color; if (S.sheet.showNote) S.sheet.note = readNote(); return drawSheet(); }
@@ -836,11 +908,26 @@ document.addEventListener('click', ev => {
     S.sheet.picks = cur.includes(ds.pick) ? cur.filter(x => x !== ds.pick) : [...cur, ds.pick];
     return drawSheet();
   }
-  if (ds.pside) { if (S.sheet.showNote) S.sheet.note = readNote(); S.sheet.side = ds.pside; return drawSheet(); }
-  if (ds.store) {
-    if (S.sheet.showNote) S.sheet.note = readNote();
-    S.sheet.store = ds.store;
-    S.sheet.freezer = ds.store === 'freezer' ? S.sheet.ml : ds.store === 'fridge' ? 0 : Math.round(S.sheet.ml / 2 / 5) * 5;
+  if (ds.pstep || ds.pplace || ds.pcont || ds.addbag || ds.rmbag) {
+    const sh = S.sheet; if (sh.showNote) sh.note = readNote();
+    if (ds.pstep) {
+      const [path, d] = ds.pstep.split(':'), parts = path.split('.');
+      let o = sh.sides; for (const k of parts.slice(0, -1)) o = o[k];
+      const f = parts.at(-1); o[f] = Math.max(0, (o[f] || 0) + +d);
+      if (parts.length === 2 && f === 'ml' && sh.sides[parts[0]].bags.length === 1) sh.sides[parts[0]].bags[0].ml = o[f];
+    }
+    if (ds.pplace) { const [k, i, v] = ds.pplace.split(':'); sh.sides[k].bags[+i].place = v; }
+    if (ds.pcont) { const [k, i, v] = ds.pcont.split(':'); sh.sides[k].bags[+i].container = v; }
+    if (ds.addbag) {
+      const sd = sh.sides[ds.addbag], used = sd.bags.reduce((a, b) => a + (b.ml || 0), 0);
+      const prev = sd.bags.at(-1);
+      sd.bags.push({ ml: Math.max(0, sd.ml - used), place: prev.place, container: prev.container });
+    }
+    if (ds.rmbag) {
+      const [k, i] = ds.rmbag.split(':'), sd = sh.sides[k];
+      sd.bags.splice(+i, 1);
+      if (sd.bags.length === 1) sd.bags[0].ml = sd.ml;
+    }
     return drawSheet();
   }
   if (ds.milk) { const p = S.milk.find(x => x.id === ds.milk); return p && openSheet('milk', { id: p.id, draft: { ...p }, confirmDiscard: false }); }
@@ -854,9 +941,11 @@ document.addEventListener('click', ev => {
 
   switch (ds.act) {
     case 'feed': return openSheet('feed', { source: 'breast', picks: null });
-    case 'pump': return openPump();
+    case 'pump': return pumpTap();
     case 'savepump': return savePump();
-    case 'switchbreast': return openPump({ side: S.sheet.side === 'left' ? 'right' : 'left', startOffset: null });
+    case 'discardsession':
+      if (!S.sheet.confirmDiscard) { S.sheet.note = readNote(); S.sheet.confirmDiscard = true; return drawSheet(); }
+      return discardSession();
     case 'thaw': return thawMilk();
     case 'discard':
       if (!S.sheet.confirmDiscard) { S.sheet.confirmDiscard = true; return drawSheet(); }
@@ -890,6 +979,25 @@ document.addEventListener('click', ev => {
 
 
 $('#sheet-backdrop').addEventListener('click', () => closeSheet());
+
+document.addEventListener('input', ev => {
+  if (!S.sheet || S.sheet.kind !== 'pump' || !ev.target.dataset.pin) return;
+  pumpInput(ev.target);
+  // Refresh counters and the save button without redrawing (keeps the keyboard open).
+  const sh = S.sheet;
+  for (const k of ['left', 'right']) {
+    const el = document.getElementById('cnt-' + k), sd = sh.sides[k];
+    if (el) { const l = sd.ml - sd.bags.reduce((a, b) => a + (b.ml || 0), 0); el.textContent = l > 0 ? `${l} ml still to put in a bag` : l < 0 ? `${-l} ml too many` : 'All ml in bags ✓'; el.classList.toggle('off', !!l); }
+  }
+  const problem = ['left', 'right'].map(k => L.sideProblem(sh.sides[k]) && `${side(k)}: ${L.sideProblem(sh.sides[k])}`).filter(Boolean)[0];
+  const total = sh.sides.left.ml + sh.sides.right.ml, btn = $('[data-act="savepump"]');
+  if (btn) { btn.disabled = !!problem || !total; btn.textContent = `Save · ${total} ml`; }
+  const pr = $('#pump-problem'); if (pr) pr.textContent = problem || (total ? 'The codes to write on the bags show after saving.' : 'Add the ml for at least one side.');
+});
+// A side's ml going from 0 to more (or back) shows/hides its bags: redraw when the field is left.
+document.addEventListener('change', ev => {
+  if (S.sheet?.kind === 'pump' && ev.target.dataset.pin && S.sheet.needsRedraw) { if (S.sheet.showNote) S.sheet.note = readNote(); drawSheet(); }
+});
 
 // Night light checkbox and temperature (sleep card and edit sheet).
 document.addEventListener('change', ev => {

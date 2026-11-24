@@ -118,14 +118,42 @@ export function sleepDefaults(list, t = Date.now()) {
 }
 
 // ---------- Pump and milk stock ----------
-// A pump record is one breast. Its milk becomes one or two "portions" (bags or bottles):
-// the fridge part keeps the plain code (BPL-004), the freezer part gets -F (BPL-004-F).
-export const MILK_RULES = { fridgeDays: 4, freezerMonths: 6, thawedHours: 24 };
+// A pump session can have a Left and a Right record. Each record's milk is split into one or more
+// "portions" (a bag or a bottle), each in one place: room temperature, fridge or freezer.
+// Codes: side + number + place letter, e.g. L-004-B. When one place on a side holds two or more
+// portions, those get numbers instead (L-004-1, L-004-2). Records made before Nov 2026's rework
+// keep their old BPL-/BPR- codes.
+export const MILK_RULES = { roomHours: 4, fridgeDays: 4, freezerMonths: 6, thawedHours: 24 };
+export const PLACE_LETTER = { room: 'A', fridge: 'B', freezer: 'C' };
 
 export function pumpCode(side, seq) {
-  return `BP${side === 'left' ? 'L' : 'R'}-${String(seq).padStart(3, '0')}`;
+  return `${side === 'left' ? 'L' : 'R'}-${String(seq).padStart(3, '0')}`;
 }
-export const portionCode = (code, place) => (place === 'freezer' ? `${code}-F` : code);
+export const portionCode = (code, place) => (place === 'freezer' ? `${code}-F` : code); // old style, kept for reference
+
+// Codes for a side's bags, in order. bags: [{ place }]
+export function bagCodes(code, bags) {
+  const count = {};
+  for (const b of bags) count[b.place] = (count[b.place] || 0) + 1;
+  let n = 0;
+  return bags.map(b => (count[b.place] > 1 ? `${code}-${++n}` : `${code}-${PLACE_LETTER[b.place]}`));
+}
+
+// Checks a side of the pump card. Returns null when fine, else a short message.
+export function sideProblem(sd) {
+  if (!(sd.ml > 0)) return null;
+  if (sd.bags.length > 1) {
+    const sum = sd.bags.reduce((a, b) => a + (b.ml || 0), 0);
+    if (sum !== sd.ml) return sum < sd.ml ? `${sd.ml - sum} ml still to put in a bag` : `${sum - sd.ml} ml too many in the bags`;
+    if (sd.bags.some(b => !(b.ml > 0))) return 'Every bag needs some ml';
+  }
+  return null;
+}
+
+// The running or stopped-but-unsaved pump session, if any.
+export function openPumpSession(list) {
+  return list.find(e => e.type === 'pumpsession') || null;
+}
 
 // Split a pump's total into the portions to store. freezerMl is clamped to 0..total.
 export function splitPortions(total, freezerMl) {
@@ -145,8 +173,9 @@ export function lastPump(list) {
 }
 
 // When a portion must be used or thrown away.
-// Fridge: 4 days from pumping. Freezer: 6 months from pumping. Thawed: 24 h from thawing.
+// Room temperature: 4 h. Fridge: 4 days from pumping. Freezer: 6 months. Thawed: 24 h from thawing.
 export function milkExpiry(p) {
+  if (p.place === 'room') return p.pumpedAt + MILK_RULES.roomHours * HOUR;
   if (p.place === 'thawed') return (p.thawedAt ?? Date.now()) + MILK_RULES.thawedHours * HOUR;
   if (p.place === 'freezer') {
     const d = new Date(p.pumpedAt);
@@ -156,16 +185,17 @@ export function milkExpiry(p) {
   return p.pumpedAt + MILK_RULES.fridgeDays * DAY;
 }
 
-// 'expired', 'soon' (fridge: under 1 day left; thawed: under 6 h; freezer: under 30 days) or 'ok'.
+// 'expired', 'soon' (room: under 1 h; fridge: under 1 day; thawed: under 6 h; freezer: under 30 days) or 'ok'.
 export function milkFlag(p, now = Date.now()) {
   const left = milkExpiry(p) - now;
   if (left <= 0) return 'expired';
-  const soon = { freezer: 30 * DAY, thawed: 6 * HOUR }[p.place] ?? DAY;
+  const soon = { freezer: 30 * DAY, thawed: 6 * HOUR, room: HOUR }[p.place] ?? DAY;
   return left < soon ? 'soon' : 'ok';
 }
 
 export const inStock = p => !p.deleted && !p.discarded && (p.left ?? 0) > 0;
-export const inFridge = p => p.place === 'fridge' || p.place === 'thawed';
+// Ready to give now: room temperature, fridge or thawed (not frozen).
+export const inFridge = p => p.place === 'fridge' || p.place === 'thawed' || p.place === 'room';
 
 // Oldest pumped first (use the oldest milk first).
 export function stockList(portions) {
@@ -173,10 +203,10 @@ export function stockList(portions) {
 }
 
 export function stockTotals(portions, now = Date.now()) {
-  const t = { fridge: 0, freezer: 0, soon: 0, expired: 0 };
+  const t = { room: 0, fridge: 0, freezer: 0, soon: 0, expired: 0 };
   for (const p of portions) {
     if (!inStock(p)) continue;
-    if (inFridge(p)) t.fridge += p.left; else t.freezer += p.left;
+    if (p.place === 'room') t.room += p.left; else if (inFridge(p)) t.fridge += p.left; else t.freezer += p.left;
     const f = milkFlag(p, now);
     if (f === 'soon') t.soon++;
     if (f === 'expired') t.expired++;

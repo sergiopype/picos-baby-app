@@ -92,11 +92,13 @@ const SLEEP = {
 };
 
 const SIDE = { left: 'Left', right: 'Right' };
-const PLACE = { fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
 const SOURCE = { breast: 'Breast milk', formula: 'Formula' };
 
-// Same rules as the app (app/js/logic.js): fridge 4 days, freezer 6 months, thawed 24 h.
+// Same rules as the app (app/js/logic.js): room 4 h, fridge 4 days, freezer 6 months, thawed 24 h.
 function milkExpiry(p) {
+  if (p.place === 'room') return p.pumpedAt + 4 * 3600e3;
   if (p.place === 'thawed') return (p.thawedAt ?? Date.now()) + 24 * 3600e3;
   if (p.place === 'freezer') { const d = new Date(p.pumpedAt); d.setMonth(d.getMonth() + 6); return d.getTime(); }
   return p.pumpedAt + 4 * 86400e3;
@@ -104,8 +106,13 @@ function milkExpiry(p) {
 
 function entryToNotion(e) {
   if (e.type === 'pump') {
+    const bags = e.bags || [];
+    const sum = place => bags.length ? bags.filter(b => b.place === place).reduce((a, b) => a + (b.ml || 0), 0) : (place === 'fridge' ? e.fridgeMl : place === 'freezer' ? e.freezerMl : 0) || 0;
     return { ds: DS.pump, props: { Code: title(e.code || `${SIDE[e.kind]} · not stored`), Time: date(e.start), Side: sel(SIDE[e.kind]),
-      'Amount (ml)': num(e.ml), 'Fridge (ml)': num(e.fridgeMl || 0), 'Freezer (ml)': num(e.freezerMl || 0), 'Logged by': who(e.by), Notes: txt(e.note) } };
+      'Duration (min)': num(e.end > e.start ? mins(e) : null),
+      'Amount (ml)': num(e.ml), 'Room temp (ml)': num(sum('room')), 'Fridge (ml)': num(sum('fridge')), 'Freezer (ml)': num(sum('freezer')),
+      Bags: txt(bags.map(b => `${b.code} ${PLACE[b.place]} ${CONTAINER[b.container] || ''} ${b.ml} ml`.replace('  ', ' ')).join(', ')),
+      'Logged by': who(e.by), Notes: txt(e.note) } };
   }
   if (e.type === 'feed') {
     const breast = e.kind === 'left' || e.kind === 'right';
@@ -129,7 +136,7 @@ function entryToNotion(e) {
 
 function milkToNotion(p) {
   const status = p.discarded ? 'Discarded' : (p.left ?? 0) <= 0 ? 'Used' : 'In stock';
-  return { ds: DS.milk, props: { Code: title(p.code || '?'), Side: sel(SIDE[p.side]), Place: sel(PLACE[p.place]), Status: sel(status),
+  return { ds: DS.milk, props: { Code: title(p.code || '?'), Side: sel(SIDE[p.side]), Place: sel(PLACE[p.place]), Container: sel(CONTAINER[p.container]), Status: sel(status),
     Pumped: date(p.pumpedAt), Expires: date(milkExpiry(p)), 'Amount (ml)': num(p.ml), 'Left (ml)': num(Math.max(0, p.left ?? 0)),
     'Logged by': who(p.by), Notes: txt(p.note) } };
 }
@@ -168,7 +175,8 @@ async function syncCollection(collectionId, toNotion, isReady, state) {
 
 const state = await fs('GET', '/meta/notion').then(fromDoc).catch(() => ({}));
 const hasTimer = e => e.type === 'sleep' || (e.type === 'feed' && (e.kind === 'left' || e.kind === 'right'));
-const entryReady = e => typeof e.start === 'number' && (!hasTimer(e) || e.end != null);
+// Pump sessions are only the timer; the Left/Right pump records made from them are what gets copied.
+const entryReady = e => e.type !== 'pumpsession' && typeof e.start === 'number' && (!hasTimer(e) || e.end != null);
 await syncCollection('entries', entryToNotion, entryReady, state);
 await syncCollection('contacts', contactToNotion, c => !!c.name, state);
 await syncCollection('milk', milkToNotion, p => typeof p.pumpedAt === 'number' && !!p.code, state);

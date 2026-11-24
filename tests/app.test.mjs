@@ -103,62 +103,80 @@ check(await has(B, 'Bottle · 80 ml'), 'B: undo brings it back');
 
 // Pump and milk stock
 const stockText = async p => (await p.textContent('.stockline')).replace(/\s+/g, ' ').trim();
+const waitStock = async (p, txt) => { let l = ''; for (let i = 0; i < 25; i++) { l = await stockText(p); if (l.includes(txt)) return l; await sleep(300); } return l; };
 check((await stockText(A)).includes('empty'), 'Home: milk stock line shows empty');
 check(await A.locator('.bar-inner .act').count() === 4, 'Home: four big buttons (Feed, Pump, Sleep, Diaper)');
 await B.click('[data-act="pump"]');
-check(await B.isVisible('.big-choice.suggested[data-pside="left"]'), 'Pump card opens with Left picked');
-await B.click('[data-store="split"]');
-for (let i = 0; i < 4; i++) await B.click('[data-step="ml:5"]');
-await B.screenshot({ path: shots + '/8-pump-card.png' });
+check(await B.locator('.act.pump.running:has-text("Stop pump")').waitFor({ timeout: 8000 }).then(() => true, () => false) && await B.locator('#sheet').isHidden(), 'First tap on Pump starts the timer without a card');
+check(await has(A, 'Stop pump'), 'A: sees the pump session running');
+await sleep(1200);
+await B.click('[data-act="pump"]');
+check(await B.isVisible('#sheet h2:has-text("Pump ·")'), 'Second tap stops it and opens the card with the duration on top');
+check(await B.locator('[data-addbag]').count() === 0, 'Sides start at 0 ml (not pumped), no bags shown');
+// Left: 80 ml in three bags (two fridge, one freezer)
+await B.fill('[data-pin="left.ml"]', '80'); await B.press('[data-pin="left.ml"]', 'Tab');
+check(await B.isVisible('[data-pin="left.min"]') && await B.isVisible('[data-pcont="left:0:bag"].on'), 'Left with ml shows minutes and one bag (Bag preselected)');
+await B.click('[data-pplace="left:0:fridge"]');
+await B.click('[data-addbag="left"]');
+await B.fill('[data-pin="left.bags.0.ml"]', '40');
+check(await B.isVisible('#cnt-left:has-text("40 ml still to put in a bag")') && await B.isDisabled('[data-act="savepump"]'), 'Counter shows ml still to assign, Save waits');
+await B.fill('[data-pin="left.bags.1.ml"]', '20');
+await B.click('[data-addbag="left"]');
+await B.click('[data-pplace="left:2:freezer"]');
+check(await B.inputValue('[data-pin="left.bags.2.ml"]') === '20' && await B.isVisible('#cnt-left:has-text("All ml in bags")'), 'New bag gets the ml left over (20)');
+// Right: 60 ml at room temperature in a bottle, stopped earlier (18 min)
+await B.fill('[data-pin="right.ml"]', '60'); await B.press('[data-pin="right.ml"]', 'Tab');
+await B.click('[data-pplace="right:0:room"]'); await B.click('[data-pcont="right:0:bottle"]');
+await B.fill('[data-pin="right.min"]', '18');
+await B.screenshot({ path: shots + '/8-pump-card.png', fullPage: false });
 await B.click('[data-act="savepump"]');
-check(await B.locator('.label-card .code', { hasText: 'BPL-001-F' }).waitFor({ timeout: 8000 }).then(() => true, () => false)
-  && await B.isVisible('.label-card.fridge:has-text("BPL-001")'), 'Saved pump shows bag codes BPL-001 (fridge) and BPL-001-F (freezer)');
-check(await B.isVisible('.label-card.fridge:has-text("50 ml")') && await B.isVisible('.label-card.freezer:has-text("30 ml")'), '80 ml split into fridge 50 ml and freezer 30 ml');
+const codesOf = async p => { await p.locator('.label-card .code').first().waitFor({ timeout: 8000 }); return p.locator('.label-card .code').allTextContents(); };
+const saved = await codesOf(B);
+check(saved.join() === 'L-001-1,L-001-2,L-001-C,R-001-A', `Codes: two fridge bags numbered, freezer and room keep letters (${saved.join(' ')})`);
+check(await B.isVisible('.label-card.room:has-text("Room temp · Bottle · 60 ml")'), 'Saved card shows place, container and ml');
 await B.screenshot({ path: shots + '/9-pump-saved.png' });
-await B.click('[data-act="switchbreast"]');
-check(await B.isVisible('.big-choice.suggested[data-pside="right"]'), 'Switch breast opens the card on Right');
-await B.click('[data-store="fridge"]');
-await B.click('[data-act="savepump"]');
-check(await B.locator('.label-card .code', { hasText: 'BPR-001' }).waitFor({ timeout: 8000 }).then(() => true, () => false), 'Right breast gets its own numbering: BPR-001');
 await B.click('[data-act="close"]');
-check(await has(A, 'Pumped Right · 80 ml · BPR-001'), 'A: sees the pump records in the timeline');
-// Both phones pump Left at the same moment: numbers must not clash
-await A.click('[data-act="pump"]'); await A.click('[data-pside="left"]'); await A.click('[data-store="fridge"]');
-await B.click('[data-act="pump"]'); await B.click('[data-pside="left"]'); await B.click('[data-store="fridge"]');
+check(await has(A, 'Pumped Right · 60 ml') && await has(A, '· R-001'), 'A: sees both sides saved as their own records');
+check(await A.locator('.row:has-text("Pumping")').count() === 0 && await A.isVisible('.act.pump:not(.running)'), 'Session row gone once saved');
+// Both phones finish the same session at once: numbers must not clash
+await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="pump"]');
+await B.locator('.act.pump:has-text("Finish pump")').waitFor({ timeout: 8000 }); await B.click('[data-act="pump"]');
+for (const P of [A, B]) { await P.fill('[data-pin="left.ml"]', '50'); await P.press('[data-pin="left.ml"]', 'Tab'); await P.click('[data-pplace="left:0:fridge"]'); }
 await Promise.all([A.click('[data-act="savepump"]'), B.click('[data-act="savepump"]')]);
-await A.locator('.label-card .code').first().waitFor(); await B.locator('.label-card .code').first().waitFor();
-const ca = await A.textContent('.label-card .code'), cb = await B.textContent('.label-card .code');
-check(ca !== cb && [ca, cb].sort().join() === 'BPL-002,BPL-003', `Two phones saving at once get different codes (${ca}, ${cb})`);
+const ca = (await codesOf(A))[0], cb = (await codesOf(B))[0];
+check(ca !== cb && [ca, cb].sort().join() === 'L-002-B,L-003-B', `Two phones saving at once get different numbers (${ca}, ${cb})`);
 await A.click('[data-act="close"]'); await B.click('[data-act="close"]');
-let line = ''; for (let i = 0; i < 20; i++) { line = await stockText(A); if (line.includes('Fridge 290 ml')) break; await sleep(300); }
-check(line.includes('Fridge 290 ml') && line.includes('Freezer 30 ml'), `Stock line totals fridge and freezer (${line})`);
-// Bottle from stock: oldest fridge bag preselected, partial use
+let line = await waitStock(A, 'Fridge 160 ml');
+check(line.includes('Room 60 ml') && line.includes('Fridge 160 ml') && line.includes('Freezer 20 ml'), `Stock line totals room, fridge and freezer (${line})`);
+// Closing the card without saving keeps the session
+await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="pump"]'); await A.click('[data-act="close"]');
+check(await A.isVisible('.act.pump:has-text("Finish pump")'), 'Closing the card unsaved leaves "Finish pump"');
+await A.click('[data-act="pump"]');
+check(await A.isVisible('[data-act="savepump"]'), 'Finish pump reopens the card');
+await A.click('[data-act="discardsession"]'); await A.click('[data-act="discardsession"]');
+check(await A.locator('.act.pump:not(.running)').waitFor({ timeout: 8000 }).then(() => true, () => false), 'Discard session clears it');
+// Bottle from stock: the bag that expires first (room temp) is preselected, partial use
 await A.click('[data-act="feed"]');
-check(await A.isVisible('.milkrow.on:has-text("BPL-001")'), 'Bottle preselects the oldest fridge bag (BPL-001)');
-check(await A.locator('.milkrow:has-text("BPL-001-F")').count() === 0, 'Frozen bags are hidden until asked for');
-await A.screenshot({ path: shots + '/10-bottle-from-stock.png' });
+check(await A.isVisible('.milkrow.on:has-text("R-001-A")'), 'Bottle preselects the bag that expires first (room temp R-001-A)');
+check(await A.locator('.milkrow:has-text("L-001-C")').count() === 0, 'Frozen bags are hidden until asked for');
 for (let i = 0; i < 5; i++) await A.click('[data-step="bottle:-10"]'); // 80 → 30 ml
+await A.screenshot({ path: shots + '/10-bottle-from-stock.png' });
 await A.click('[data-feed="bottle"]');
-check(await has(A, 'Bottle · 30 ml · BPL-001'), 'Bottle row shows which bag it came from');
-line = ''; for (let i = 0; i < 20; i++) { line = await stockText(B); if (line.includes('Fridge 260 ml')) break; await sleep(300); }
-check(line.includes('Fridge 260 ml'), 'B: stock drops by 30 ml');
+check(await has(A, 'Bottle · 30 ml · R-001-A'), 'Bottle row shows which bag it came from');
+line = await waitStock(B, 'Room 30 ml'); check(line.includes('Room 30 ml'), 'B: stock drops by 30 ml');
 await A.click('#toast [data-toast="0"]'); // undo
-line = ''; for (let i = 0; i < 20; i++) { line = await stockText(B); if (line.includes('Fridge 290 ml')) break; await sleep(300); }
-check(line.includes('Fridge 290 ml'), 'Undo puts the milk back');
+line = await waitStock(B, 'Room 60 ml'); check(line.includes('Room 60 ml'), 'Undo puts the milk back');
 await A.click('[data-act="feed"]'); await A.click('[data-src="formula"]');
 check(await A.locator('.milkrow').count() === 0 && await A.isVisible('text=Log bottle · 80 ml formula'), 'Formula option hides the stock');
 await A.click('[data-act="close"]');
 // Milk stock screen: thaw and discard
 await A.click('.stockline');
-check(await has(A, 'Milk stock') && await A.isVisible('.milkrow:has-text("BPL-001-F")'), 'Stock screen lists bags');
-const codes = await A.locator('.milkrow .code').allTextContents();
-check(codes.slice(0, 4).join() === 'BPL-001,BPR-001,BPL-002,BPL-003' || codes.slice(0, 4).join() === 'BPL-001,BPR-001,BPL-003,BPL-002', `Fridge list is oldest first (${codes.join(' ')})`);
+check(await has(A, 'Milk stock') && await A.isVisible('.day:has-text("Room temp")') && await A.isVisible('.milkrow:has-text("L-001-C")'), 'Stock screen lists bags by place');
 await A.screenshot({ path: shots + '/11-stock.png' });
-await A.click('.milkrow:has-text("BPL-001-F")'); await A.click('[data-act="thaw"]');
-check(await A.locator('.milkrow:has-text("BPL-001-F"):has-text("Thawed")').waitFor({ timeout: 8000 }).then(() => true, () => false), 'Thawed bag moves to the fridge list');
-check(await A.isVisible('.milkrow:has-text("BPL-001-F"):has-text("use within 24 h")'), 'Thawed bag must be used within 24 h');
-await A.click('.milkrow:has-text("BPR-001")'); await A.click('[data-act="discard"]'); await A.click('[data-act="discard"]');
-check(await A.locator('.milkrow:has-text("BPR-001")').waitFor({ state: 'detached', timeout: 8000 }).then(() => true, () => false), 'Discarded bag leaves the stock');
+await A.click('.milkrow:has-text("L-001-C")'); await A.click('[data-act="thaw"]');
+check(await A.locator('.milkrow:has-text("L-001-C"):has-text("Thawed")').waitFor({ timeout: 8000 }).then(() => true, () => false), 'Thawed bag keeps its code and moves to the fridge list');
+await A.click('.milkrow:has-text("R-001-A")'); await A.click('[data-act="discard"]'); await A.click('[data-act="discard"]');
+check(await A.locator('.milkrow:has-text("R-001-A")').waitFor({ state: 'detached', timeout: 8000 }).then(() => true, () => false), 'Discarded bag leaves the stock');
 await A.goBack(); await has(A, 'Last feed');
 
 // Contacts
