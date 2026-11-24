@@ -22,6 +22,8 @@ const DS = {
   diaper: '420f1d38-5f63-8145-a838-000b54a1d810',
   sleep: '420f1d38-5f63-814a-ab7b-000b67b7af62',
   contact: '420f1d38-5f63-81c8-acd7-000b249f81a9',
+  pump: '422f1d38-5f63-8111-bcef-000b1d389622',
+  milk: '422f1d38-5f63-81a2-95af-000b2ddeb25b',
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -37,6 +39,8 @@ function fromValue(v) {
   if ('booleanValue' in v) return v.booleanValue;
   if ('timestampValue' in v) return v.timestampValue;
   if ('nullValue' in v) return null;
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(fromValue);
+  if ('mapValue' in v) return Object.fromEntries(Object.entries(v.mapValue.fields || {}).map(([k, x]) => [k, fromValue(x)]));
   return null;
 }
 const fromDoc = d => Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fromValue(v)]));
@@ -87,13 +91,29 @@ const SLEEP = {
   sound: { silence: 'Silence', white_noise: 'White noise', music: 'Music' },
 };
 
+const SIDE = { left: 'Left', right: 'Right' };
+const PLACE = { fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const SOURCE = { breast: 'Breast milk', formula: 'Formula' };
+
+// Same rules as the app (app/js/logic.js): fridge 4 days, freezer 6 months, thawed 24 h.
+function milkExpiry(p) {
+  if (p.place === 'thawed') return (p.thawedAt ?? Date.now()) + 24 * 3600e3;
+  if (p.place === 'freezer') { const d = new Date(p.pumpedAt); d.setMonth(d.getMonth() + 6); return d.getTime(); }
+  return p.pumpedAt + 4 * 86400e3;
+}
+
 function entryToNotion(e) {
+  if (e.type === 'pump') {
+    return { ds: DS.pump, props: { Code: title(e.code || `${SIDE[e.kind]} · not stored`), Time: date(e.start), Side: sel(SIDE[e.kind]),
+      'Amount (ml)': num(e.ml), 'Fridge (ml)': num(e.fridgeMl || 0), 'Freezer (ml)': num(e.freezerMl || 0), 'Logged by': who(e.by), Notes: txt(e.note) } };
+  }
   if (e.type === 'feed') {
     const breast = e.kind === 'left' || e.kind === 'right';
     const type = { left: 'Breast L', right: 'Breast R', bottle: 'Bottle', pump: 'Pump' }[e.kind];
     const name = breast ? `${e.kind === 'left' ? 'Left' : 'Right'} breast · ${fmtDur(mins(e))}` : `${e.kind === 'bottle' ? 'Bottle' : 'Pumped'} · ${e.ml || 0} ml`;
     return { ds: DS.feed, props: { Entry: title(name), Time: date(e.start), Type: sel(type),
-      'Duration (min)': num(breast ? mins(e) : null), 'Amount (ml)': num(breast ? null : e.ml), 'Logged by': who(e.by), Notes: txt(e.note) } };
+      'Duration (min)': num(breast ? mins(e) : null), 'Amount (ml)': num(breast ? null : e.ml), 'Logged by': who(e.by), Notes: txt(e.note),
+      ...(e.kind === 'bottle' && { Source: sel(SOURCE[e.source]), 'Milk used': txt((e.uses || []).map(u => `${u.code} (${u.ml} ml)`).join(', ')) }) } };
   }
   if (e.type === 'diaper') {
     const kind = { wet: 'Wet', dirty: 'Dirty', both: 'Both' }[e.kind];
@@ -105,6 +125,13 @@ function entryToNotion(e) {
     'Day/Night': sel(SLEEP.period[e.period]), Cover: sel(SLEEP.cover[e.cover]), Location: sel(SLEEP.location[e.location]),
     Sound: sel(SLEEP.sound[e.sound]), 'Night light': { checkbox: !!e.nightLight },
     'Room temp (°C)': num(typeof e.tempC === 'number' ? e.tempC : null) } };
+}
+
+function milkToNotion(p) {
+  const status = p.discarded ? 'Discarded' : (p.left ?? 0) <= 0 ? 'Used' : 'In stock';
+  return { ds: DS.milk, props: { Code: title(p.code || '?'), Side: sel(SIDE[p.side]), Place: sel(PLACE[p.place]), Status: sel(status),
+    Pumped: date(p.pumpedAt), Expires: date(milkExpiry(p)), 'Amount (ml)': num(p.ml), 'Left (ml)': num(Math.max(0, p.left ?? 0)),
+    'Logged by': who(p.by), Notes: txt(p.note) } };
 }
 
 function contactToNotion(c) {
@@ -144,4 +171,5 @@ const hasTimer = e => e.type === 'sleep' || (e.type === 'feed' && (e.kind === 'l
 const entryReady = e => typeof e.start === 'number' && (!hasTimer(e) || e.end != null);
 await syncCollection('entries', entryToNotion, entryReady, state);
 await syncCollection('contacts', contactToNotion, c => !!c.name, state);
+await syncCollection('milk', milkToNotion, p => typeof p.pumpedAt === 'number' && !!p.code, state);
 console.log('Notion copy up to date.');

@@ -1,6 +1,6 @@
 # Picos Baby
 
-A shared baby log for two phones: feeds, diapers, sleep and important contacts.
+A shared baby log for two phones: feeds, pumping and milk stock, diapers, sleep and important contacts.
 Built for one-handed use at 3 AM. Works offline. Copies everything to Notion every hour.
 
 ## How it fits together
@@ -15,6 +15,7 @@ Built for one-handed use at 3 AM. Works offline. Copies everything to Notion eve
                   │          │            │
                   │          ▼            │
                   │   Notion: Feeds,      │
+                  │   Pumps, Milk Stock,  │
                   │   Diapers, Sleep,     │
                   │   Contacts            │
 ```
@@ -27,6 +28,19 @@ Built for one-handed use at 3 AM. Works offline. Copies everything to Notion eve
 - **Notion is a copy, not the source.** An hourly job on GitHub (`notion-sync/sync.mjs`) copies new
   and changed entries. Edit in the app, and the Notion page updates. Delete in the app, and the Notion page goes to the trash.
   Edits made directly in Notion are not copied back.
+
+## Pump and milk stock
+
+- **Pump** has its own button. Each record is one breast. Saving gives it a code to write on the bag:
+  `BPL-001`, `BPL-002`… for the left and `BPR-001`… for the right. If the milk is split, the fridge bag keeps
+  the plain code and the freezer bag gets `-F` (`BPL-004` and `BPL-004-F`). "Switch breast" starts the other side.
+- Numbers come from a counter in the database (`meta/milk`) taken inside a transaction, so both phones can save
+  at once without clashing. With no signal the phone uses the highest number it knows + 1.
+- **Milk stock** (the line above the big buttons) lists every bag oldest first with its use-by time:
+  fridge 4 days from pumping, freezer 6 months, thawed 24 hours from thawing. Bags close to it are flagged.
+  Tap a bag to thaw it, change what's left, or discard it. Bags are stored in the `milk` collection.
+- **Bottle** feeds take from stock: the fridge bag that expires first is preselected, part of a bag can be used,
+  and any other bag can be picked. Formula is a small option for when it's needed.
 
 ## Files
 

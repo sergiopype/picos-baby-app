@@ -84,9 +84,10 @@ export function todayTotals(list, now = Date.now()) {
   for (const e of list) {
     if (e.type === 'feed' && e.start >= from) {
       if (e.kind === 'bottle') t.bottleMl += e.ml || 0;
-      if (e.kind === 'pump') t.pumpMl += e.ml || 0;
+      if (e.kind === 'pump') t.pumpMl += e.ml || 0; // pumps logged before Pump had its own button
       if (isBreast(e)) t.breastMin += Math.round(((e.end ?? now) - e.start) / MIN);
     }
+    if (e.type === 'pump' && e.start >= from) t.pumpMl += e.ml || 0;
     if (e.type === 'diaper' && e.start >= from) {
       if (e.kind === 'wet' || e.kind === 'both') t.wet++;
       if (e.kind === 'dirty' || e.kind === 'both') t.dirty++;
@@ -114,4 +115,102 @@ export function sleepDefaults(list, t = Date.now()) {
     cover: last.cover ?? null, location: last.location ?? null, sound: last.sound ?? null,
     nightLight: last.nightLight ?? false, period: dayOrNight(t), tempC: SLEEP_TEMP_DEFAULT,
   };
+}
+
+// ---------- Pump and milk stock ----------
+// A pump record is one breast. Its milk becomes one or two "portions" (bags or bottles):
+// the fridge part keeps the plain code (BPL-004), the freezer part gets -F (BPL-004-F).
+export const MILK_RULES = { fridgeDays: 4, freezerMonths: 6, thawedHours: 24 };
+
+export function pumpCode(side, seq) {
+  return `BP${side === 'left' ? 'L' : 'R'}-${String(seq).padStart(3, '0')}`;
+}
+export const portionCode = (code, place) => (place === 'freezer' ? `${code}-F` : code);
+
+// Split a pump's total into the portions to store. freezerMl is clamped to 0..total.
+export function splitPortions(total, freezerMl) {
+  const fz = Math.max(0, Math.min(total, freezerMl || 0));
+  return [['fridge', total - fz], ['freezer', fz]].filter(([, ml]) => ml > 0);
+}
+
+// Highest sequence number seen for each side, from pump records we know about.
+export function maxSeq(list) {
+  const m = { left: 0, right: 0 };
+  for (const e of list) if (e.type === 'pump' && e.seq > (m[e.kind] ?? 0)) m[e.kind] = e.seq;
+  return m;
+}
+
+export function lastPump(list) {
+  return list.find(e => e.type === 'pump') || null;
+}
+
+// When a portion must be used or thrown away.
+// Fridge: 4 days from pumping. Freezer: 6 months from pumping. Thawed: 24 h from thawing.
+export function milkExpiry(p) {
+  if (p.place === 'thawed') return (p.thawedAt ?? Date.now()) + MILK_RULES.thawedHours * HOUR;
+  if (p.place === 'freezer') {
+    const d = new Date(p.pumpedAt);
+    d.setMonth(d.getMonth() + MILK_RULES.freezerMonths);
+    return d.getTime();
+  }
+  return p.pumpedAt + MILK_RULES.fridgeDays * DAY;
+}
+
+// 'expired', 'soon' (fridge: under 1 day left; thawed: under 6 h; freezer: under 30 days) or 'ok'.
+export function milkFlag(p, now = Date.now()) {
+  const left = milkExpiry(p) - now;
+  if (left <= 0) return 'expired';
+  const soon = { freezer: 30 * DAY, thawed: 6 * HOUR }[p.place] ?? DAY;
+  return left < soon ? 'soon' : 'ok';
+}
+
+export const inStock = p => !p.deleted && !p.discarded && (p.left ?? 0) > 0;
+export const inFridge = p => p.place === 'fridge' || p.place === 'thawed';
+
+// Oldest pumped first (use the oldest milk first).
+export function stockList(portions) {
+  return portions.filter(inStock).sort((a, b) => a.pumpedAt - b.pumpedAt || String(a.code).localeCompare(String(b.code)));
+}
+
+export function stockTotals(portions, now = Date.now()) {
+  const t = { fridge: 0, freezer: 0, soon: 0, expired: 0 };
+  for (const p of portions) {
+    if (!inStock(p)) continue;
+    if (inFridge(p)) t.fridge += p.left; else t.freezer += p.left;
+    const f = milkFlag(p, now);
+    if (f === 'soon') t.soon++;
+    if (f === 'expired') t.expired++;
+  }
+  return t;
+}
+
+// Which portions a bottle uses by default: fridge and thawed milk that hasn't expired,
+// whatever expires first, until the bottle's ml are covered. Frozen milk is never picked
+// automatically (it needs thawing first), but can be picked by hand.
+export function autoPick(portions, ml, now = Date.now()) {
+  const ready = portions.filter(p => inStock(p) && inFridge(p) && milkFlag(p, now) !== 'expired')
+    .sort((a, b) => milkExpiry(a) - milkExpiry(b) || a.pumpedAt - b.pumpedAt);
+  const ids = [];
+  let need = ml;
+  for (const p of ready) {
+    if (need <= 0) break;
+    ids.push(p.id);
+    need -= p.left;
+  }
+  return ids;
+}
+
+// How many ml to take from each chosen portion, in the order given. Returns
+// { uses: [{ id, code, ml }], short } where short is the ml the chosen portions can't cover.
+export function planUse(portions, ids, ml) {
+  const uses = [];
+  let need = ml;
+  for (const id of ids) {
+    const p = portions.find(x => x.id === id);
+    if (!p || need <= 0) continue;
+    const take = Math.min(p.left, need);
+    if (take > 0) uses.push({ id, code: p.code, ml: take });
+    need -= take;
+  }
+  return { uses, short: Math.max(0, need) };
 }
