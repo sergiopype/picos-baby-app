@@ -214,10 +214,14 @@ function openSleep() {
     const id = logEntry({ type: 'sleep', ...d }, { toastText: 'Asleep from now', extra: () => [] });
     return openSheet('sleep', { runningId: id, sleepStart: Date.now(), d });
   }
-  const d = Object.fromEntries(L.SLEEP_FIELDS.map(k => [k, running[k] ?? null]));
-  d.period ??= L.dayOrNight(running.start);
-  d.nightLight = !!d.nightLight;
-  openSheet('sleep', { runningId: running.id, sleepStart: running.start, d, note: running.note || '', showNote: !!running.note });
+  // Tap while asleep (home "Woke up"): stop and save at once, no card. Changes are made on the record in Activity.
+  const end = Date.now();
+  db.saveEntry(running.id, { end });
+  buzz();
+  toast(`Woke up · slept ${dur(end - running.start)}`, [
+    { label: 'Undo', fn: () => db.saveEntry(running.id, { end: null }) },
+    { label: 'Edit', fn: () => openEdit(running.id) },
+  ]);
 }
 // Keep typed values when the feed card redraws (a tap, or a change from the other phone).
 function keepFeedInputs() {

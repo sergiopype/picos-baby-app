@@ -134,18 +134,15 @@ await A.screenshot({ path: shots + '/2-sleep-card.png' });
 await A.click('[data-act="close"]'); // closing keeps it counting and saves the typed temperature
 check(await A.isVisible('.act.sleep.running'), 'Closing the card keeps the sleep running');
 check(await hasRow(B, 'Sleeping… · ' + (expected === 'day' ? '☀️' : '🌙') + ' · Crib · Swaddle'), 'B: sleep row shows day/night, place and cover');
-await B.click('[data-act="sleep"]');
-check(await B.isVisible('[data-act="stopsleep"]'), 'B: card shows Woke up · stop while asleep');
-let seen = false; for (let i = 0; i < 20 && !seen; i++) { seen = await B.inputValue('#sl-temp') === '22.5' && await B.isChecked('#sl-light'); if (!seen) { await B.click('[data-act="close"]'); await sleep(400); await B.click('[data-act="sleep"]'); } }
-check(seen, 'B: card shows the details A picked');
-await B.click('[data-sl="sound:music"]');
-await B.click('[data-act="close"]');
-await A.click('[data-act="sleep"]');
-check(await A.locator('.chip.on[data-sl="sound:music"]').waitFor({ timeout: 8000 }).then(() => true, () => false), 'A: sees sound changed on B while asleep');
-await A.click('[data-act="close"]');
 await A.screenshot({ path: shots + '/2-home.png' });
-await B.click('[data-act="sleep"]'); await B.click('[data-act="stopsleep"]');
-check(await has(B, 'Woke up · slept'), 'B: stopping from the card saves the sleep');
+// Tapping Woke up on home stops and saves at once, without opening the card
+await B.click('[data-act="sleep"]');
+check(await has(B, 'Woke up · slept') && await B.locator('#sheet').isHidden(), 'B: Woke up stops the sleep and saves it, no card');
+check(await B.isVisible('#toast [data-toast="0"]:has-text("Undo")'), 'B: Undo offered after stopping');
+await B.click('#toast [data-toast="0"]');
+check(await B.locator('.act.sleep.running').waitFor({ timeout: 8000 }).then(() => true, () => false), 'B: Undo puts the sleep back to running');
+await B.click('[data-act="sleep"]');
+check(await B.locator('.act.sleep:not(.running)').waitFor({ timeout: 8000 }).then(() => true, () => false) && await B.locator('#sheet').isHidden(), 'B: stopped again, still no card');
 check(await hasRow(A, 'Slept '), 'A: sees the finished sleep');
 await A.click('[data-act="sleep"]');
 check(await A.inputValue('#sl-temp') === '23' && await A.isVisible('.chip.on[data-sl="location:crib"]'), 'Next sleep: temp back to 23 °C, place remembered');
