@@ -27,6 +27,15 @@ check(rows.find(x => x.p.id === 'expired').expired && !rows.find(x => x.p.id ===
 check(rows.filter(x => x.same && !x.expired).map(x => x.p.id).join() === 'room,morn-old,morn-new', 'Same-window flag marks the morning bags');
 check(L.bottleStock(portions, at(21), now)[0].p.id === 'eve-old', 'An evening feed puts evening milk first');
 
+// Defrosting: grey for 12 h after Defrost, then ready; Use now makes it ready early
+const thawing = { ...bag('thaw', at(8, 0, -1), 'thawed'), thawedAt: now - 3 * 3600e3 };
+const ready = { ...bag('thawready', at(8, 0, -1), 'thawed'), thawedAt: now - 13 * 3600e3 };
+const early = { ...thawing, id: 'early', readyAt: now - 60e3, usedEarly: true };
+check(L.isDefrosting(thawing, now) && !L.isDefrosting(ready, now) && !L.isDefrosting(early, now), 'Defrosted bag is not ready until 12 h, unless Use now was pressed');
+check(L.readyAt(thawing) === thawing.thawedAt + 12 * 3600e3 && L.milkExpiry(thawing) === thawing.thawedAt + 24 * 3600e3, 'Ready 12 h after Defrost, use-by still 24 h after Defrost');
+const bs = L.bottleStock([thawing, ready, bag('f', at(8, 0, -1))], now, now);
+check(bs.at(-1).p.id === 'thaw' && bs.at(-1).defrosting && !bs[0].defrosting, 'Bottle list shows defrosting bags after the ready ones');
+
 // Taking from bags
 check(L.takeFrom(50, 60, 0) === 50 && L.takeFrom(50, 60, 50) === 10 && L.takeFrom(50, 60, 60) === 1, 'A tapped bag takes only what is still needed (at least 1 ml)');
 check(!L.canStartBottle('breast', 60, [{ ml: 50 }]) && L.canStartBottle('breast', 60, [{ ml: 50 }, { ml: 10 }]) && L.canStartBottle('breast', 60, [{ ml: 70 }]), 'Start needs the picked ml to cover the target');

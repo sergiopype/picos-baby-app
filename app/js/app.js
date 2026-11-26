@@ -102,7 +102,13 @@ function bottleWhat(e) {
   const left = e.leftoverMl > 0 ? ` (${e.leftoverMl} left over)` : '';
   return `Bottle · ${e.ml || 0} ml${left}${timed}${bottleSource(e)}`;
 }
-const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
+const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Defrosted' };
+const PLACE_EMOJI = { room: '🏠', fridge: '❄️', freezer: '🧊', thawed: '💧' };
+const PLACE_KEEP = { room: `use within ${L.MILK_RULES.roomHours} hours`, fridge: `use within ${L.MILK_RULES.fridgeDays} days`,
+  freezer: `use within ${L.MILK_RULES.freezerMonths} months`, thawed: `use within ${L.MILK_RULES.thawedHours} h of defrosting` };
+const longDate = t => new Date(t).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+// 'defrosting' (grey, not ready for 12 h), 'defrosted' (light blue, ready) or '' for other bags.
+const defrostClass = p => (p.place !== 'thawed' ? '' : L.isDefrosting(p) ? 'defrosting' : 'defrosted');
 const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
 const shortDate = t => new Date(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 // "in 3 d", "in 5 h", "expired 2 h ago", "in 4 months"
@@ -319,7 +325,7 @@ function renderHome(app) {
   const st = L.stockTotals(S.milk, now);
   const flag = st.expired ? `<span class="flag bad">${st.expired} expired</span>` : st.soon ? `<span class="flag soon">${st.soon} use soon</span>` : '';
   const stockLine = `<button class="stockline" data-nav="stock"><span class="emoji">🧊</span>
-    ${st.room || st.fridge || st.freezer ? `<span>${st.room ? `Room <b>${st.room} ml</b> · ` : ''}Fridge <b>${st.fridge} ml</b> · Freezer <b>${st.freezer} ml</b></span>` : '<span>Milk stock · empty</span>'}${flag}<span class="chev">›</span></button>`;
+    ${st.room || st.fridge || st.freezer ? `<span><small class="sl-title">Milk stock</small>${st.room ? `Room <b>${st.room} ml</b> · ` : ''}Fridge <b>${st.fridge} ml</b> · Freezer <b>${st.freezer} ml</b></span>` : '<span><small class="sl-title">Milk stock</small>Empty</span>'}${flag}<span class="chev">›</span></button>`;
   const lastP = L.lastPump(list), ps = L.openPumpSession(list);
   const pumpBtn = ps && ps.end == null
     ? `<button class="act pump running" data-act="pump"><span class="emoji">⏹️</span>Stop pump<span class="hint" data-timer="${ps.start}">${clockTimer(now - ps.start)}</span></button>`
@@ -475,22 +481,23 @@ function bagList() {
   const rows = L.bottleStock(S.milk, feedAt);
   const selected = L.pickedMl(sh.picks);
   const counter = `<p class="counter ${selected >= sh.target ? '' : 'off'}" id="bottle-count">${selected} of ${sh.target} ml selected${selected >= sh.target ? ' ✓' : ''}</p>`;
-  if (!rows.length) return `<p class="fine">No milk in the fridge or at room temperature. Thaw a bag in Milk stock, or switch to Other.</p>${counter}`;
+  if (!rows.length) return `<p class="fine">No milk in the fridge or at room temperature. Defrost a bag in Milk stock, or switch to Other.</p>${counter}`;
   let html = '', group = null;
-  for (const { p, same, expired } of rows) {
-    const g = expired ? 'expired' : same ? 'same' : 'other';
+  for (const { p, same, expired, defrosting } of rows) {
+    const g = expired ? 'expired' : defrosting ? 'defrosting' : same ? 'same' : 'other';
     if (g !== group) {
       group = g;
-      html += `<div class="section-label">${g === 'same' ? `Pumped in the ${L.WINDOWS[w].toLowerCase()} · use first` : g === 'other' ? 'Other times of day' : 'Expired · can\'t be used'}</div>`;
+      html += `<div class="section-label">${g === 'same' ? `Pumped in the ${L.WINDOWS[w].toLowerCase()} · use first` : g === 'other' ? 'Other times of day' : g === 'defrosting' ? `Defrosting · not ready yet (tap to use now)` : 'Expired · can\'t be used'}</div>`;
     }
     const pick = sh.picks.find(x => x.id === p.id);
     const pf = L.milkFlag(p);
     const extra = pick ? `<span class="num-in take-in"><button data-bstep="${p.id}:-5" aria-label="Less">−</button><b>${pick.ml} ml</b><button data-bstep="${p.id}:5" aria-label="More">+</button></span>` : '';
-    html += `<div class="milkpick ${pick ? 'on' : ''} ${expired ? 'expired' : pf}">
-      <button class="milkrow ${pick ? 'on' : ''} ${pf}" ${expired ? 'disabled' : `data-pick="${p.id}"`}>
+    const dc = defrostClass(p);
+    html += `<div class="milkpick ${pick ? 'on' : ''} ${expired ? 'expired' : pf} ${dc}">
+      <button class="milkrow ${pick ? 'on' : ''} ${pf} ${dc}" ${expired ? 'disabled' : defrosting ? `data-usenow="${p.id}"` : `data-pick="${p.id}"`}>
         <span class="code">${esc(p.code)}</span>
         <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]} · ${L.WINDOWS[L.timeWindow(p.pumpedAt)]}
-          <small>pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span></button>${extra}</div>`;
+          <small>${defrosting ? `<b class="ready-in">ready in ${dur(L.readyAt(p) - Date.now())}</b> · ` : ''}pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span></button>${extra}</div>`;
   }
   return `${html}${counter}`;
 }
@@ -562,11 +569,40 @@ function saveBottle() {
   ]);
 }
 function milkRow(p, attrs, on, extra = '') {
-  const f = L.milkFlag(p);
-  return `<button class="milkrow ${on ? 'on' : ''} ${f}" ${attrs}>
+  const f = L.milkFlag(p), dc = defrostClass(p);
+  return `<button class="milkrow ${on ? 'on' : ''} ${f} ${dc}" ${attrs}>
     <span class="code">${esc(p.code)}</span>
     <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]}${p.container ? ` · ${CONTAINER[p.container]}` : ''}
-      <small>pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span>${extra}</button>`;
+      <small>${dc === 'defrosting' ? `<b class="ready-in">ready in ${dur(L.readyAt(p) - Date.now())}</b> · ` : ''}pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span>${extra}</button>`;
+}
+// "Use now" on a bag that is still defrosting: asks first, then marks it ready.
+function askUseNow(id) {
+  const p = S.milk.find(x => x.id === id);
+  if (!p) return;
+  confirmBox(`Use ${p.code} before the ${L.MILK_RULES.defrostHours} h defrost is over?`, 'Use', () => {
+    const at = Date.now();
+    S.milk = S.milk.map(x => (x.id === id ? { ...x, readyAt: at, usedEarly: true } : x));
+    db.saveMilk(id, { readyAt: at, usedEarly: true });
+    if (S.sheet?.kind === 'milk') { S.sheet.draft = { ...S.sheet.draft, readyAt: at, usedEarly: true }; }
+    if (S.sheet) { if (S.sheet.kind === 'feed') keepFeedInputs(); drawSheet(); }
+    render();
+    toast(`${p.code} ready to use`, []);
+  });
+}
+// A small in-app popup with Cancel and one action button.
+function confirmBox(text, okLabel, onOk) {
+  const el = document.createElement('div');
+  el.className = 'confirm';
+  el.innerHTML = `<div class="confirm-box" role="dialog"><p>${esc(text)}</p>
+    <div class="btn-row"><button class="btn" data-cf="no">Cancel</button><button class="btn primary" data-cf="yes">${esc(okLabel)}</button></div></div>`;
+  el.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-cf]');
+    ev.stopPropagation();
+    if (!b) return;
+    el.remove();
+    if (b.dataset.cf === 'yes') onOk();
+  });
+  document.body.appendChild(el);
 }
 // Undo/delete: a bottle puts its milk back; a pump removes its bags.
 function returnMilk(e) {
@@ -767,17 +803,29 @@ function renderStock(app) {
     ${room.length ? section('Room temp', room, '') : ''}
     ${section('Fridge', fridge, 'Nothing in the fridge.')}
     ${section('Freezer', frozen, 'Nothing in the freezer.')}
-    <p class="fine" style="margin-top:18px">Oldest first. Room temperature milk keeps ${L.MILK_RULES.roomHours} hours, fridge milk ${L.MILK_RULES.fridgeDays} days from pumping, frozen milk ${L.MILK_RULES.freezerMonths} months, and thawed milk ${L.MILK_RULES.thawedHours} hours from thawing. Tap a bag to thaw it, change what's left, or discard it.</p>
+    <p class="fine" style="margin-top:18px">Oldest first. Room temperature milk keeps ${L.MILK_RULES.roomHours} hours, fridge milk ${L.MILK_RULES.fridgeDays} days from pumping, frozen milk ${L.MILK_RULES.freezerMonths} months, and defrosted milk ${L.MILK_RULES.thawedHours} hours from defrosting. A defrosted bag is grey for its first ${L.MILK_RULES.defrostHours} hours while it defrosts, then light blue when ready. Tap a bag to defrost it, change what's left, or discard it.</p>
   </div>`;
 }
+// The bag card: code, place, pumped, side and container, expiry, milk left, note, Defrost, Discard / Save.
 function milkBody() {
-  const p = S.sheet.draft, f = L.milkFlag(p);
+  const sh = S.sheet, p = sh.draft, f = L.milkFlag(p), dc = defrostClass(p);
+  const defrostLine = p.place === 'thawed'
+    ? `<p class="mk-line defrost-state ${dc}">${dc === 'defrosting'
+        ? `⏳ Defrosting since ${clock(p.thawedAt)} · ready in <b>${dur(L.readyAt(p) - Date.now())}</b>`
+        : `✅ Ready to use${p.usedEarly ? ' (used before the 12 h)' : ''} · defrosted ${shortDate(p.thawedAt)}, ${clock(p.thawedAt)}`}</p>` : '';
+  const note = sh.showNote
+    ? `<label class="field"><span>Note (optional)</span><textarea id="mk-note">${esc(sh.note)}</textarea></label>`
+    : `<button class="notebtn" data-act="mknote">+ Add note</button>`;
   return `<div class="sheet-title"><h2 class="code-title">${esc(p.code)}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-    <p class="fine" style="margin-top:0">${side(p.side)} breast · ${PLACE[p.place]}${p.container ? ` · ${CONTAINER[p.container]}` : ''} · pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)}${p.thawedAt ? ` · thawed ${shortDate(p.thawedAt)}, ${clock(p.thawedAt)}` : ''}</p>
-    <p class="expiry ${f}">${f === 'expired' ? 'Expired' : 'Use by'} ${shortDate(L.milkExpiry(p))}, ${clock(L.milkExpiry(p))} (${untilText(L.milkExpiry(p))})</p>
-    <label class="field"><span>Milk left (ml, of ${p.ml})</span><input type="number" inputmode="numeric" id="mk-left" value="${p.left}"></label>
-    <label class="field"><span>Note</span><textarea id="mk-note">${esc(p.note)}</textarea></label>
-    ${p.place === 'freezer' ? '<button class="btn wide" data-act="thaw" style="margin-bottom:10px">Thaw · move to fridge (24 h to use)</button>' : ''}
+    <p class="mk-line mk-place"><span class="emoji">${PLACE_EMOJI[p.place]}</span> <b>${PLACE[p.place]}</b> <span class="muted">(${PLACE_KEEP[p.place]})</span></p>
+    <p class="mk-line mk-pumped">🫙 Pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)}</p>
+    <p class="mk-line mk-side">🤱 ${side(p.side)} breast${p.container ? ` · ${CONTAINER[p.container]}` : ''}</p>
+    ${defrostLine}
+    <div class="expiry ${f}"><span>${f === 'expired' ? 'Expired:' : 'Expiry:'}</span><b>${longDate(L.milkExpiry(p))}</b></div>
+    <label class="field"><span>Milk left (ml, of ${p.ml})</span><input type="number" inputmode="numeric" id="mk-left" value="${sh.leftVal ?? p.left}"></label>
+    ${note}
+    ${p.place === 'freezer' ? '<button class="btn wide defrost-btn" data-act="defrost">💧 Defrost · move to fridge</button>' : ''}
+    ${dc === 'defrosting' ? `<button class="btn wide defrost-btn" data-usenow="${p.id}">Use now</button>` : ''}
     <div class="btn-row"><button class="btn danger" data-act="discard">${S.sheet.confirmDiscard ? 'Tap again to discard' : 'Discard'}</button>
       <button class="btn primary" data-act="savemilk">Save</button></div>`;
 }
@@ -785,16 +833,16 @@ function saveMilkEdit() {
   const p = S.sheet.draft, fields = {};
   const left = Math.max(0, Math.round(Number($('#mk-left').value) || 0));
   if (left !== p.left) fields.left = left;
-  const note = $('#mk-note').value.trim(); if (note !== (p.note || '')) fields.note = note;
+  const note = ($('#mk-note')?.value ?? p.note ?? '').trim(); if (note !== (p.note || '')) fields.note = note;
   if (Object.keys(fields).length) db.saveMilk(p.id, fields);
   closeSheet();
   if (Object.keys(fields).length) toast(left === 0 ? `${p.code} used up` : 'Saved', []);
 }
-function thawMilk() {
+function defrostMilk() {
   const p = S.sheet.draft, now = Date.now();
-  db.saveMilk(p.id, { place: 'thawed', thawedAt: now });
+  db.saveMilk(p.id, { place: 'thawed', thawedAt: now, readyAt: null, usedEarly: false });
   closeSheet();
-  toast(`${p.code} thawing · use within 24 h`, [{ label: 'Undo', fn: () => db.saveMilk(p.id, { place: 'freezer', thawedAt: null }) }]);
+  toast(`${p.code} defrosting · ready in ${L.MILK_RULES.defrostHours} h, use within ${L.MILK_RULES.thawedHours} h`, [{ label: 'Undo', fn: () => db.saveMilk(p.id, { place: 'freezer', thawedAt: null }) }]);
 }
 function discardMilk() {
   const p = S.sheet.draft;
@@ -1128,6 +1176,7 @@ document.addEventListener('click', ev => {
     return logEntry({ type: 'feed', kind: k, start: startAt, note }, { toastText: `${side(k)} breast started${backdated ? ` at ${clock(startAt)}` : ''}`, extra: () => [] });
   }
   if (ds.src) { keepFeedInputs(); S.sheet.source = ds.src; return drawSheet(); }
+  if (ds.usenow) return askUseNow(ds.usenow);
   if (ds.pick) {
     keepFeedInputs();
     const sh = S.sheet, p = S.milk.find(x => x.id === ds.pick);
@@ -1165,7 +1214,7 @@ document.addEventListener('click', ev => {
     }
     return drawSheet();
   }
-  if (ds.milk) { const p = S.milk.find(x => x.id === ds.milk); return p && openSheet('milk', { id: p.id, draft: { ...p }, confirmDiscard: false }); }
+  if (ds.milk) { const p = S.milk.find(x => x.id === ds.milk); return p && openSheet('milk', { id: p.id, draft: { ...p }, confirmDiscard: false, showNote: !!p.note, note: p.note || '' }); }
   if (ds.diaper) {
     const startAt = sheetStart(), note = readNote(), color = S.sheet.color;
     closeSheet();
@@ -1194,9 +1243,13 @@ document.addEventListener('click', ev => {
     case 'discardsession':
       if (!S.sheet.confirmDiscard) { S.sheet.note = readNote(); S.sheet.confirmDiscard = true; return drawSheet(); }
       return discardSession();
-    case 'thaw': return thawMilk();
+    case 'defrost': return defrostMilk();
+    case 'mknote': S.sheet.leftVal = $('#mk-left')?.value; S.sheet.showNote = true; drawSheet(); return $('#mk-note')?.focus();
     case 'discard':
-      if (!S.sheet.confirmDiscard) { S.sheet.confirmDiscard = true; return drawSheet(); }
+      if (!S.sheet.confirmDiscard) {
+        if (S.sheet.kind === 'milk') { S.sheet.leftVal = $('#mk-left')?.value; S.sheet.note = $('#mk-note')?.value ?? S.sheet.note; }
+        S.sheet.confirmDiscard = true; return drawSheet();
+      }
       return discardMilk();
     case 'savemilk': return saveMilkEdit();
     case 'diaper': return openSheet('diaper');
