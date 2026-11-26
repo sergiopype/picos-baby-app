@@ -82,6 +82,18 @@ button { cursor: pointer; border: 0; background: none; }
 .today-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 14px; margin-top: 6px; }
 .today-grid b { font-variant-numeric: tabular-nums; }
 
+/* ---------- Activity (fold-out list) ---------- */
+.activity { margin-top: 14px; }
+.activity-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--card); border-radius: 14px; padding: 14px; min-height: 56px;
+}
+.activity-head .title { font-weight: 800; font-size: 17px; }
+.activity-head .count { color: var(--muted); font-size: 15px; }
+.activity-head .chev { transition: transform .15s ease; }
+.activity.open .activity-head .chev { transform: rotate(90deg); }
+.activity.open .day:first-of-type { margin-top: 14px; }
+
 /* ---------- Timeline ---------- */
 .day { margin: 22px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .row {
@@ -182,7 +194,11 @@ button { cursor: pointer; border: 0; background: none; }
   background: var(--bg); border-radius: 24px 24px 0 0; padding: 10px 16px calc(18px + env(safe-area-inset-bottom));
   max-width: 560px; margin: 0 auto; box-shadow: 0 -8px 30px rgb(0 0 0 / .35);
 }
-.grab { width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 2px auto 10px; }
+.grab { width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 2px auto 10px; position: relative; }
+/* A bigger invisible touch area around the small handle, so it's easy to grab and swipe down. */
+.grab::before { content: ''; position: absolute; inset: -14px -60px; }
+#sheet { transition: transform .18s ease; }
+#sheet .grab, #sheet .sheet-title { touch-action: none; }
 .sheet-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .sheet-title h2 { margin: 0; font-size: 22px; }
 .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -264,8 +280,11 @@ button { cursor: pointer; border: 0; background: none; }
   padding: 10px 10px 10px 16px; display: flex; align-items: center; gap: 8px; font-weight: 600;
   box-shadow: 0 8px 24px rgb(0 0 0 / .3);
 }
-/* With a card open, the toast sits at the top so it never covers the card's buttons. */
-#sheet:not([hidden]) ~ #toast { top: calc(12px + env(safe-area-inset-top)); bottom: auto; }
+#toast { transition: transform .18s ease, opacity .18s ease; touch-action: pan-y; }
+/* With a card open, the toast stays at the bottom (just lower, where the buttons were), and the
+   card gets extra room underneath so its last buttons can scroll clear of the toast. */
+#sheet:not([hidden]) ~ #toast { bottom: calc(12px + env(safe-area-inset-bottom)); }
+body.toast-on #sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 #toast .msg { flex: 1; }
 #toast button { color: var(--bg); font-weight: 800; padding: 10px 12px; min-height: 44px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 12%, transparent); }
 

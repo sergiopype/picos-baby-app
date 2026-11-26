@@ -11,6 +11,17 @@ const ctxA = await browser.newContext(phone), ctxB = await browser.newContext(ph
 await ctxA.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:5173' });
 const A = await ctxA.newPage(), B = await ctxB.newPage();
 for (const [n, p] of [['A', A], ['B', B]]) p.on('pageerror', e => { console.log(n, 'pageerror', e.message); fails++; });
+// Simulated finger drag (touchstart → moves → touchend) on the element matching sel.
+const drag = (p, sel, dx, dy) => p.evaluate(({ sel, dx, dy }) => {
+  const el = document.querySelector(sel), r = el.getBoundingClientRect();
+  const x0 = r.left + r.width / 2, y0 = r.top + Math.min(r.height / 2, 10);
+  const t = (x, y) => new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+  const fire = (type, x, y) => el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+    touches: type === 'touchend' ? [] : [t(x, y)], changedTouches: [t(x, y)] }));
+  fire('touchstart', x0, y0);
+  for (let i = 1; i <= 6; i++) fire('touchmove', x0 + dx * i / 6, y0 + dy * i / 6);
+  fire('touchend', x0 + dx, y0 + dy);
+}, { sel, dx, dy });
 const has = async (p, text, ms = 8000) => { try { await p.getByText(text, { exact: false }).first().waitFor({ timeout: ms }); return true; } catch { return false; } };
 
 // Setup on A
@@ -30,6 +41,11 @@ check(await has(B, 'Join the baby log'), 'B: join screen');
 await B.click('[data-setup="Ana Rita"]');
 check(await has(B, 'Pico'), 'B: joined and sees baby name from A');
 
+// Activity list starts collapsed; one tap opens it
+check(await A.isVisible('.activity-head:has-text("Activity")') && await A.locator('.activity .row, .activity .empty').count() === 0, 'Activity starts collapsed');
+await A.click('[data-act="activity"]'); await B.click('[data-act="activity"]');
+check(await A.isVisible('.activity .empty'), 'Tapping Activity opens the list');
+
 // A starts left feed (2 taps)
 const t0 = Date.now();
 await A.click('[data-act="feed"]'); await A.click('[data-feed="left"]');
@@ -39,6 +55,11 @@ check(await has(B, 'Stop feed'), 'B: sees the running feed live');
 await sleep(1200);
 await B.click('[data-act="stopfeed"]');
 check(await has(B, 'saved'), 'B: stopped the feed, toast shown');
+check(await B.isVisible('.activity-head:has-text("1 today")'), 'Activity header counts today\'s entries');
+await drag(B, '#toast', 30, 0); await sleep(300);
+check(await B.isVisible('#toast'), 'Toast: a short drag does not dismiss it');
+await drag(B, '#toast', 160, 0); await sleep(400);
+check(!(await B.isVisible('#toast')), 'Toast: swiping it sideways dismisses it');
 check(await has(A, 'next: Right'), 'A: next side now Right');
 
 // Diaper with colour on B
@@ -51,7 +72,13 @@ await A.click('[data-feed="bottle"]');
 check(await has(A, 'Bottle · 80 ml'), 'A: bottle 80 ml logged (default 60 + 20)');
 await A.click('[data-act="feed"]');
 check(await A.isVisible('text=Log bottle · 80 ml'), 'Bottle remembers last amount (80 ml)');
-await A.click('[data-act="close"]');
+await drag(A, '#sheet .choices', 0, 200); await sleep(300);
+check(await A.isVisible('#sheet'), 'Card: dragging down in the middle does not close it');
+await drag(A, '#sheet .grab', 0, 25); await sleep(300);
+check(await A.isVisible('#sheet'), 'Card: a short pull on the handle springs back');
+await drag(A, '#sheet .grab', 0, 200); await sleep(400);
+check(!(await A.isVisible('#sheet')), 'Card: swiping down from the handle closes it');
+check(await has(A, 'Last feed'), 'Card swipe-close returns to home');
 
 // Sleep: one tap starts the timer and opens the card; details save live; stop inside the card
 await A.click('[data-act="sleep"]');
@@ -199,6 +226,7 @@ await ctxA.setOffline(true);
 await A.click('[data-act="diaper"]'); await A.click('[data-diaper="wet"]');
 check(await has(A, 'waiting to sync'), 'A offline: shows "waiting to sync"');
 await A.reload();
+await A.click('[data-act="activity"]');
 check(await has(A, 'Pico') && await has(A, 'Wet'), 'A offline: app reopens from the phone with the unsent entry');
 await sleep(2000); check(await wetRows(B) === bWetBefore, 'B: has not got it yet (A offline)');
 await ctxA.setOffline(false);

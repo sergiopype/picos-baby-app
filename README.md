@@ -109,7 +109,9 @@ in Firebase, and in GitHub's encrypted secrets.
   Fell asleep earlier? Tap "5 / 15 / 30 min earlier" in the card. Close the card any time; the sleep keeps counting.
   To stop, tap the home button (now **Woke up**) to reopen the card, then **Woke up · stop**.
 - **Forgot to log?** Every sheet has "5 / 15 / 30 min ago" and "Other…" at the top.
-- **Mistake?** Every save shows **Undo** for 7 seconds. Tap any entry in the list to edit, add a note, or delete it.
+- **Mistake?** Every save shows **Undo** for 7 seconds at the bottom of the screen. Swipe it left or right to dismiss it sooner.
+- **Activity**: the list of everything logged, folded away under **Activity** on the home screen (it shows how many entries today). Tap it to open, tap an entry to edit, add a note, or delete it. It starts folded each time the app opens.
+- **Closing a card**: tap ✕, tap outside it, use Android back, or swipe down from the grey handle at the top.
 - **Contacts**: the 📞 button. Each contact has a "When to call" line and a big Call button.
 - **Look**: light by default. Settings → Look has "Dark at night" (8 PM to 7 AM) and "Dark".
 - **Backup**: Settings → Download CSV.

@@ -31,6 +31,7 @@ const S = {
   milk: [], milkPending: new Set(), // milk portions still holding milk
   view: 'home',
   sheet: null, // { kind, ...data } while a sheet is open
+  activityOpen: false, // the Activity list on the home screen; always starts collapsed when the app opens
 };
 
 const $ = sel => document.querySelector(sel);
@@ -294,6 +295,13 @@ function renderHome(app) {
       ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}</span><span class="time">${clock(e.start)}</span></button>`;
   }
   if (!list.length) rows = `<div class="empty">Nothing logged yet.<br>Tap a big button below to start.</div>`;
+  // Activity: a fold-out list so the home screen stays clean. The header shows how much was logged today.
+  const todayCount = list.filter(e => e.start >= L.startOfDay(now)).length;
+  const activity = `<section class="activity${S.activityOpen ? ' open' : ''}">
+    <button class="activity-head" data-act="activity" aria-expanded="${S.activityOpen}">
+      <span class="title">Activity</span><span class="count">${todayCount} today</span><span class="chev">›</span></button>
+    ${S.activityOpen ? `${rows}<button class="more" data-act="older">Show earlier days</button>` : ''}
+  </section>`;
 
   const sleepBtn = sl?.asleep
     ? `<button class="act sleep running" data-act="sleep"><span class="emoji">🌤️</span>Woke up<span class="hint" data-ago="${sl.since}">${ago(sl.since)}</span></button>`
@@ -318,8 +326,7 @@ function renderHome(app) {
       <button class="iconbtn" data-nav="contacts" aria-label="Contacts">📞</button>
       <button class="iconbtn" data-nav="settings" aria-label="Settings">⚙️</button></div>
     <div class="now">${feedTile}${diaperTile}${sleepTile}${todayTile}</div>
-    ${rows}
-    <button class="more" data-act="older">Show earlier days</button>
+    ${activity}
   </div>
   <div class="bar"><div class="bar-wrap">${stockLine}<div class="bar-inner">${feedBtn}
     ${pumpBtn}
@@ -424,7 +431,7 @@ function drawSheet() {
       ${noteBlock()}`;
   } else if (sh.kind === 'edit') body = editBody();
   else if (sh.kind === 'contact') body = contactBody();
-  el.innerHTML = `<div class="grab"></div>${body}`;
+  el.innerHTML = `<div class="grab" aria-hidden="true"></div>${body}`;
 }
 
 // ---------- Bottle from stock ----------
@@ -831,10 +838,65 @@ function toast(text, actions = []) {
   const el = $('#toast');
   toastActions = actions;
   el.innerHTML = `<span class="msg">${esc(text)}</span>${actions.map((a, i) => `<button data-toast="${i}">${esc(a.label)}</button>`).join('')}`;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, actions.length ? 7000 : 2500);
+  el.style.transform = ''; el.style.opacity = ''; el.classList.remove('leaving');
+  el.hidden = false; document.body.classList.add('toast-on');
+  toastAutoHide(actions.length ? 7000 : 2500);
 }
+function toastAutoHide(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, ms); }
+function hideToast() {
+  clearTimeout(toastTimer);
+  $('#toast').hidden = true; document.body.classList.remove('toast-on');
+}
+
+// ---------- Swipe gestures ----------
+// Swipe the toast left or right to dismiss it. Swipe a card down from its top (the grey handle
+// or the title line) to close it, same as the X. A short movement still counts as a normal tap.
+function swipe(el, { start, axis, done, threshold }) {
+  let s = null;
+  el.addEventListener('touchstart', ev => {
+    if (ev.touches.length !== 1 || !start(ev)) return;
+    s = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), d: 0, on: false };
+  }, { passive: true });
+  el.addEventListener('touchmove', ev => {
+    if (!s) return;
+    const dx = ev.touches[0].clientX - s.x, dy = ev.touches[0].clientY - s.y;
+    if (!s.on) {
+      if (Math.hypot(dx, dy) < 10) return;
+      // Only take over when the finger moves mostly along our direction.
+      if (axis === 'x' ? Math.abs(dx) < Math.abs(dy) : dy < 0 || Math.abs(dy) < Math.abs(dx)) { s = null; return; }
+      s.on = true; el.style.transition = 'none';
+    }
+    ev.preventDefault(); // stops the page scrolling, and the drag never counts as a tap
+    s.d = axis === 'x' ? dx : Math.max(0, dy);
+    el.style.transform = axis === 'x' ? `translateX(${s.d}px)` : `translateY(${s.d}px)`;
+    if (axis === 'x') el.style.opacity = String(Math.max(0.2, 1 - Math.abs(s.d) / 250));
+  }, { passive: false });
+  const end = () => {
+    if (!s) return;
+    const g = s; s = null;
+    if (!g.on) return;
+    el.style.transition = '';
+    const fast = Math.abs(g.d) / Math.max(1, Date.now() - g.t) > 0.6; // a quick flick counts too
+    if (Math.abs(g.d) > threshold || (fast && Math.abs(g.d) > 30)) {
+      el.style.transform = axis === 'x' ? `translateX(${Math.sign(g.d) * 120}%)` : 'translateY(100%)';
+      if (axis === 'x') el.style.opacity = '0';
+      setTimeout(() => { done(); el.style.transform = ''; el.style.opacity = ''; }, 180);
+    } else { el.style.transform = ''; el.style.opacity = ''; }
+  };
+  el.addEventListener('touchend', end);
+  el.addEventListener('touchcancel', () => { if (s) { s = null; el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; } });
+}
+swipe($('#toast'), {
+  axis: 'x', threshold: 80, done: hideToast,
+  start: () => { clearTimeout(toastTimer); return true; },
+});
+// If a swipe on the toast is let go without dismissing it, give it a few more seconds.
+$('#toast').addEventListener('touchend', () => { if (!$('#toast').hidden) toastAutoHide(toastActions.length ? 5000 : 2500); });
+swipe($('#sheet'), {
+  axis: 'y', threshold: 90, done: () => closeSheet(),
+  // From the handle or the title line, and only while the card is scrolled to the top.
+  start: ev => $('#sheet').scrollTop <= 0 && !!ev.target.closest('.grab, .sheet-title') && !ev.target.closest('input, textarea, select'),
+});
 
 // ---------- Taps ----------
 document.addEventListener('click', ev => {
@@ -843,7 +905,7 @@ document.addEventListener('click', ev => {
   const ds = t.dataset;
   const list = all();
 
-  if (ds.toast != null) { $('#toast').hidden = true; return toastActions[+ds.toast]?.fn(); }
+  if (ds.toast != null) { hideToast(); return toastActions[+ds.toast]?.fn(); }
   if (ds.setup) return finishSetup(ds.setup);
   if (ds.nav) { if (ds.nav !== 'home') history.pushState({ view: ds.nav }, ''); else if (S.view !== 'home') return history.back(); S.view = ds.nav; window.scrollTo(0, 0); return render(); }
   if (ds.edit) {
@@ -974,6 +1036,7 @@ document.addEventListener('click', ev => {
     case 'copy': return navigator.clipboard?.writeText(inviteLink()).then(() => toast('Link copied', []));
     case 'csv': return exportCsv();
     case 'older': return loadOlder();
+    case 'activity': S.activityOpen = !S.activityOpen; return render();
   }
 });
 
