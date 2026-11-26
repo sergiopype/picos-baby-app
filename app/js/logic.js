@@ -19,6 +19,13 @@ export function runningFeed(list) {
   return list.find(e => isBreast(e) && e.end == null) || null;
 }
 
+// A bottle that was started (timer running) but not yet finished with "Stop bottle feeding".
+// Bottles logged before Nov 2026's rework always have an end, so they never count as running.
+export const isBottle = e => e.type === 'feed' && e.kind === 'bottle';
+export function runningBottle(list) {
+  return list.find(e => isBottle(e) && e.end == null) || null;
+}
+
 export function runningSleep(list) {
   const last = list.find(e => e.type === 'sleep');
   return last && last.end == null ? last : null;
@@ -34,6 +41,12 @@ export function lastAmount(list, kind, fallback = 60) {
   return last ? last.ml : fallback;
 }
 
+// Starting target for a new bottle: the last bottle's target (or, for older bottles, what it gave).
+export function lastTarget(list, fallback = 60) {
+  const last = list.find(e => isBottle(e) && (e.targetMl > 0 || e.ml > 0));
+  return last ? (last.targetMl > 0 ? last.targetMl : last.ml) : fallback;
+}
+
 // The most recent feeding session: its start, the entries in it, and whether it's still going.
 export function lastFeedSession(list) {
   const feeds = list.filter(isBabyFeed);
@@ -46,7 +59,7 @@ export function lastFeedSession(list) {
     else break;
   }
   parts.reverse(); // oldest first
-  return { start: parts[0].start, parts, running: parts.some(p => isBreast(p) && p.end == null) };
+  return { start: parts[0].start, parts, running: parts.some(p => (isBreast(p) || isBottle(p)) && p.end == null) };
 }
 
 export function lastDiaper(list) {
@@ -243,4 +256,46 @@ export function planUse(portions, ids, ml) {
     need -= take;
   }
   return { uses, short: Math.max(0, need) };
+}
+
+// ---------- Bottle feeding from stock ----------
+// Parts of the day, by the phone's clock (Sergio, Nov 2026): Morning 5 AM to 12 PM,
+// Afternoon 12 PM to 8 PM, Evening 8 PM to 5 AM. Milk pumped in a part of the day is best
+// given in that same part of the day, so the bag list puts those bags first.
+export const WINDOWS = { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' };
+export function timeWindow(t = Date.now()) {
+  const h = new Date(t).getHours();
+  return h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 20 ? 'afternoon' : 'evening';
+}
+
+// Bags for the bottle list, in order: room temperature, fridge and thawed milk (frozen milk needs
+// thawing first, so it isn't listed here). Bags pumped in the same part of the day as the feed come
+// first, then the rest; inside each group the one that expires first comes first. Expired bags go
+// last, marked so the screen can grey them out.
+// Returns [{ p, same, expired }].
+export function bottleStock(portions, feedTime = Date.now(), now = Date.now()) {
+  const w = timeWindow(feedTime);
+  return portions.filter(p => inStock(p) && inFridge(p))
+    .map(p => ({ p, same: timeWindow(p.pumpedAt) === w, expired: milkFlag(p, now) === 'expired' }))
+    .sort((a, b) => a.expired - b.expired || b.same - a.same || milkExpiry(a.p) - milkExpiry(b.p) || a.p.pumpedAt - b.p.pumpedAt);
+}
+
+// Tapping a bag takes only what is still needed to reach the target (at least 1 ml), up to what's in it.
+export function takeFrom(left, target, selectedMl) {
+  return Math.max(1, Math.min(left, target - selectedMl));
+}
+
+export const pickedMl = picks => picks.reduce((a, x) => a + (x.ml || 0), 0);
+
+// Can "Start bottle feeding" be pressed? Breast milk needs the picked bags to cover the target;
+// "Other" only needs an amount.
+export function canStartBottle(source, target, picks) {
+  if (!(target > 0)) return false;
+  return source === 'other' || pickedMl(picks) >= target;
+}
+
+// What a finished bottle records: prepared = what went into the bottle, eaten = prepared - leftover.
+export function bottleResult(preparedMl, leftoverMl) {
+  const left = Math.max(0, Math.min(preparedMl, Math.round(leftoverMl || 0)));
+  return { leftoverMl: left, ml: preparedMl - left };
 }

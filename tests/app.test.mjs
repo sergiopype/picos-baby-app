@@ -71,12 +71,31 @@ check(await has(A, 'next: Right'), 'A: next side now Right');
 await B.click('[data-act="diaper"]'); await B.click('[data-color="Yellow"]'); await B.click('[data-diaper="dirty"]');
 check(await has(A, 'Dirty · Yellow'), 'A: sees B\'s dirty yellow diaper');
 
-// Bottle with stepper, backdated 30 min
-await A.click('[data-act="feed"]'); await A.click('[data-offset="30"]'); await A.click('[data-step="bottle:10"]'); await A.click('[data-step="bottle:10"]');
-await A.click('[data-feed="bottle"]');
-check(await hasRow(A, 'Bottle · 80 ml'), 'A: bottle 80 ml logged (default 60 + 20)');
+// Feed card layout: chips (with 10 min ago), Left/Right, full-width Bottle button
 await A.click('[data-act="feed"]');
-check(await A.isVisible('text=Log bottle · 80 ml'), 'Bottle remembers last amount (80 ml)');
+check(await A.isVisible('[data-offset="10"]:has-text("10 min ago")'), 'Feed card has a "10 min ago" chip');
+check(await A.isVisible('.bottle-btn') && await A.locator('[data-act="startbottle"]').count() === 0, 'Bottle is a button; its panel opens on tap');
+{ const r = await A.evaluate(() => { const g = s => document.querySelector(s).getBoundingClientRect(); return { ch: g('.choices'), b: g('.bottle-btn') }; });
+  check(Math.abs(r.b.width - r.ch.width) < 2 && r.b.top > r.ch.bottom, 'Bottle button is as wide as Left + Right, below them'); }
+// "Other" bottle, backdated 30 min: amount only, timer, then stop with 0 left over
+await A.click('[data-offset="30"]'); await A.click('.bottle-btn'); await A.click('[data-src="other"]');
+check(await A.locator('.milkrow').count() === 0, 'Other hides the stock list');
+await A.click('[data-step="target:10"]'); await A.click('[data-step="target:10"]');
+check(await A.evaluate(() => document.querySelector('.notebtn').getBoundingClientRect().bottom < document.querySelector('[data-act="startbottle"]').getBoundingClientRect().top), '+ Add a note sits above Start bottle feeding');
+await A.click('[data-act="startbottle"]');
+check(await A.isVisible('.act.feed.running:has-text("Stop bottle")'), 'Home: Feed button turns into Stop bottle with a timer');
+check(await has(B, 'Bottle feeding'), 'B: sees the bottle feeding live');
+await A.click('[data-act="feed"]');
+check(await A.isVisible('[data-act="stopbottle"]:has-text("Stop bottle feeding")') && await A.isVisible('.bottle-running:has-text("80 ml prepared")'), 'Card shows the running bottle, 80 ml prepared, and Stop bottle feeding');
+await A.click('[data-act="stopbottle"]');
+check(await A.isVisible('#leftover') && await A.isVisible('[data-act="stopback"]') && await A.isVisible('[data-act="savebottle"]'), 'Stop asks for left over ml with Save and Back');
+await A.click('[data-act="stopback"]');
+check(await A.isVisible('[data-act="stopbottle"]'), 'Back returns to the running bottle');
+await A.click('[data-act="stopbottle"]'); await A.click('[data-act="savebottle"]');
+check(await hasRow(A, 'Bottle · 80 ml'), 'A: bottle 80 ml saved (default 60 + 20)');
+check(await A.isVisible('.act.feed:not(.running)'), 'Feed button back to normal');
+await A.click('[data-act="feed"]'); await A.click('.bottle-btn');
+check(await A.isVisible('.stepper .val:has-text("80 ml")'), 'Bottle remembers the last target (80 ml)');
 await drag(A, '#sheet .choices', 0, 200); await sleep(300);
 check(await A.isVisible('#sheet'), 'Card: dragging down in the middle does not close it');
 await drag(A, '#sheet .grab', 0, 25); await sleep(300);
@@ -212,19 +231,43 @@ await A.click('[data-act="pump"]');
 check(await A.isVisible('[data-act="savepump"]'), 'Finish pump reopens the card');
 await A.click('[data-act="discardsession"]'); await A.click('[data-act="discardsession"]');
 check(await A.locator('.act.pump:not(.running)').waitFor({ timeout: 8000 }).then(() => true, () => false), 'Discard session clears it');
-// Bottle from stock: the bag that expires first (room temp) is preselected, partial use
-await A.click('[data-act="feed"]');
-check(await A.isVisible('.milkrow.on:has-text("R-001-A")'), 'Bottle preselects the bag that expires first (room temp R-001-A)');
-check(await A.locator('.milkrow:has-text("L-001-C")').count() === 0, 'Frozen bags are hidden until asked for');
-for (let i = 0; i < 5; i++) await A.click('[data-step="bottle:-10"]'); // 80 → 30 ml
+// Bottle from stock: pick bags until the target is covered, timer, leftover, eaten
+await A.click('[data-act="feed"]'); await A.click('.bottle-btn');
+const order = await A.locator('.milkpick .code').allTextContents();
+check(order[0] === 'R-001-A' && !order.includes('L-001-C'), `Bags listed with the soonest to expire first, no frozen bags (${order.join(' ')})`);
+check(await A.isVisible('.section-label:has-text("use first")'), 'Bags from this part of the day are grouped first');
+check(await A.isDisabled('[data-act="startbottle"]') && await A.isVisible('#bottle-count:has-text("0 of 80 ml")'), 'Start waits until bags are picked');
+await A.click('[data-pick]:has-text("R-001-A")');
+check(await A.isVisible('#bottle-count:has-text("60 of 80 ml")') && await A.isDisabled('[data-act="startbottle"]'), 'Picking a 60 ml bag: 60 of 80 ml, still not enough');
+await A.click('[data-pick]:has-text("L-001-1")');
+check(await A.isVisible('.milkpick.on:has-text("L-001-1") .take-in:has-text("20 ml")') && await A.isVisible('#bottle-count:has-text("80 of 80 ml")') && await A.isEnabled('[data-act="startbottle"]'), 'Second bag takes only the 20 ml still needed; Start is enabled');
+const l1 = await A.getAttribute('[data-pick]:has-text("L-001-1")', 'data-pick');
+await A.click(`[data-bstep="${l1}:-5"]`);
+check(await A.isVisible('#bottle-count:has-text("75 of 80 ml")') && await A.isDisabled('[data-act="startbottle"]'), 'Taking 5 ml less from a bag disables Start again');
+await A.click(`[data-bstep="${l1}:5"]`);
 await A.screenshot({ path: shots + '/10-bottle-from-stock.png' });
-await A.click('[data-feed="bottle"]');
-check(await hasRow(A, 'Bottle · 30 ml · R-001-A'), 'Bottle row shows which bag it came from');
-line = await waitStock(B, 'Room 30 ml'); check(line.includes('Room 30 ml'), 'B: stock drops by 30 ml');
+await A.click('[data-act="startbottle"]');
+line = await waitStock(B, 'Fridge 140 ml'); check(!line.includes('Room') && line.includes('Fridge 140 ml'), `B: stock drops when the bottle starts (${line})`);
 await A.click('#toast [data-toast="0"]'); // undo
-line = await waitStock(B, 'Room 60 ml'); check(line.includes('Room 60 ml'), 'Undo puts the milk back');
-await A.click('[data-act="feed"]'); await A.click('[data-src="formula"]');
-check(await A.locator('.milkrow').count() === 0 && await A.isVisible('text=Log bottle · 80 ml formula'), 'Formula option hides the stock');
+line = await waitStock(B, 'Room 60 ml'); check(line.includes('Room 60 ml') && line.includes('Fridge 160 ml'), 'Undo puts the milk back');
+// 30 ml from one fridge bag; part of the bag stays in stock
+await A.click('[data-act="feed"]'); await A.click('.bottle-btn');
+for (let i = 0; i < 5; i++) await A.click('[data-step="target:-10"]'); // 80 → 30 ml
+await A.click('[data-pick]:has-text("L-001-1")');
+await A.click('[data-act="shownote"]'); await A.fill('#note', 'sleepy');
+await A.click('[data-act="startbottle"]');
+line = await waitStock(B, 'Fridge 130 ml'); check(line.includes('Fridge 130 ml'), 'Only the 30 ml taken leaves stock');
+await A.click('.act.feed.running');
+await A.click('[data-act="stopbottle"]'); await A.fill('#leftover', '10');
+check(await A.isVisible('#eaten:has-text("Baby ate 20 ml")'), 'Leftover 10 of 30: shows baby ate 20 ml');
+await A.screenshot({ path: shots + '/13-bottle-stop.png' });
+await A.click('[data-act="savebottle"]');
+check(await hasRow(B, 'Bottle · 20 ml (10 left over)') && await hasRow(B, 'sleepy'), 'B: bottle row shows eaten, left over, and the note');
+await toAct(A); await A.click('.row:has-text("10 left over")');
+check(await A.inputValue('#ed-leftover') === '10' && await A.isVisible('#ed-end'), 'Edit shows the left over and end time');
+await A.click('[data-act="close"]'); await toHome(A);
+await A.click('[data-act="feed"]'); await A.click('.bottle-btn'); await A.click('[data-src="other"]');
+check(await A.locator('.milkrow').count() === 0 && await A.isEnabled('[data-act="startbottle"]'), 'Other: no stock list, Start works with just the amount');
 await A.click('[data-act="close"]');
 // Activity filters
 await toAct(A);

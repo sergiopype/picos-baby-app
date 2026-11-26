@@ -8,7 +8,8 @@
     "test:sync": "node tests/sync.test.mjs",
     "test:app": "node tests/app.test.mjs",
     "test:notion": "node tests/notion.test.mjs",
-    "test": "node tests/sync.test.mjs && node tests/app.test.mjs && node tests/notion.test.mjs"
+    "test:logic": "node tests/logic.test.mjs",
+    "test": "node tests/logic.test.mjs && node tests/sync.test.mjs && node tests/app.test.mjs && node tests/notion.test.mjs"
   },
   "keywords": [],
   "author": "",

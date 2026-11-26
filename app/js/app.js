@@ -89,10 +89,18 @@ function babyAge(birth) {
   return `${Math.floor(days / 30.44)} months old`;
 }
 const side = k => (k === 'left' ? 'Left' : 'Right');
+// "Other" was called "Formula" before Nov 2026; old entries show as Other.
+const isOther = e => e.source === 'other' || e.source === 'formula';
 function bottleSource(e) {
-  if (e.source === 'formula') return ' formula';
+  if (isOther(e)) return ' · other';
   if (e.uses?.length) return ` · ${e.uses.map(u => u.code).join(' + ')}`;
   return '';
+}
+function bottleWhat(e) {
+  if (e.end == null) return `Bottle feeding… · ${e.preparedMl ?? e.ml ?? 0} ml${bottleSource(e)}`;
+  const timed = e.preparedMl != null && e.end > e.start ? ` · ${dur(e.end - e.start)}` : '';
+  const left = e.leftoverMl > 0 ? ` (${e.leftoverMl} left over)` : '';
+  return `Bottle · ${e.ml || 0} ml${left}${timed}${bottleSource(e)}`;
 }
 const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
 const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
@@ -109,7 +117,7 @@ const whoTag = by => by ? `<span class="who ${by === 'Sergio' ? 's' : 'a'}">${by
 function describe(e) {
   if (e.type === 'feed') {
     if (L.isBreast(e)) return { ic: '🤱', what: `${side(e.kind)} breast · ${e.end == null ? 'feeding…' : dur(e.end - e.start)}` };
-    if (e.kind === 'bottle') return { ic: '🍼', what: `Bottle · ${e.ml || 0} ml${bottleSource(e)}` };
+    if (e.kind === 'bottle') return { ic: '🍼', what: bottleWhat(e) };
     return { ic: '🫙', what: `Pumped · ${e.ml || 0} ml` }; // logged before Pump had its own button
   }
   if (e.type === 'pump') {
@@ -135,10 +143,10 @@ function start() {
   const since = L.startOfDay() - (WINDOW_DAYS - 1) * L.DAY;
   S.olderFrom = since;
   unsub = [
-    db.watchEntries(since, ({ list, pending }) => { S.entries = list; S.pending = pending; render(); }),
+    db.watchEntries(since, ({ list, pending }) => { S.entries = list; S.pending = pending; render(); if (S.sheet?.kind === 'feed' && (L.runningBottle(all())?.id ?? null) !== (S.sheet.runningId ?? null)) { keepFeedInputs(); if (!L.runningBottle(all())) { S.sheet.runningId = null; S.sheet.stopping = false; } drawSheet(); } }),
     db.watchContacts(({ list, pending }) => { S.contacts = list; S.contactsPending = pending; if (S.view === 'contacts') render(); }),
     db.watchBaby(b => { S.baby = b; render(); }),
-    db.watchMilk(({ list, pending }) => { S.milk = list; S.milkPending = pending; if (S.sheet?.kind === 'feed') { if (S.sheet.showNote) S.sheet.note = readNote(); drawSheet(); } render(); }),
+    db.watchMilk(({ list, pending }) => { S.milk = list; S.milkPending = pending; if (S.sheet?.kind === 'feed' && S.sheet.bottleOpen && !S.sheet.runningId && document.activeElement?.id !== 'note') { keepFeedInputs(); drawSheet(); } render(); }),
     db.watchMilkCounter(),
   ];
 }
@@ -148,10 +156,11 @@ function logEntry(fields, { toastText, undo = true, extra = [] } = {}) {
   const now = Date.now();
   const e = { id, type: fields.type, kind: fields.kind ?? null, start: fields.start ?? now, end: fields.end ?? null,
     ml: fields.ml ?? null, color: fields.color ?? null, note: fields.note ?? '', by: S.me, createdAt: now, deleted: false };
-  if (e.type === 'diaper' || (e.type === 'feed' && !['left', 'right'].includes(e.kind))) e.end = e.start;
+  if (e.type === 'diaper' || (e.type === 'feed' && !['left', 'right', 'bottle'].includes(e.kind))) e.end = e.start;
   if (e.type === 'sleep') for (const k of L.SLEEP_FIELDS) e[k] = fields[k] ?? null;
   if (e.type === 'pump') { e.end = fields.end ?? e.start; Object.assign(e, { code: fields.code ?? null, seq: fields.seq ?? null, bags: fields.bags ?? [], portions: fields.portions ?? [], sessionId: fields.sessionId ?? null }); }
-  if (e.kind === 'bottle') { e.source = fields.source ?? null; e.uses = fields.uses ?? []; }
+  if (e.kind === 'bottle') for (const k of ['source', 'targetMl', 'preparedMl', 'leftoverMl', 'window']) e[k] = fields[k] ?? null;
+  if (e.kind === 'bottle') e.uses = fields.uses ?? [];
   db.saveEntry(id, e);
   if (e.uses?.length) for (const u of e.uses) db.adjustMilk(u.id, -u.ml);
   buzz();
@@ -210,6 +219,12 @@ function openSleep() {
   d.nightLight = !!d.nightLight;
   openSheet('sleep', { runningId: running.id, sleepStart: running.start, d, note: running.note || '', showNote: !!running.note });
 }
+// Keep typed values when the feed card redraws (a tap, or a change from the other phone).
+function keepFeedInputs() {
+  if (S.sheet.showNote) S.sheet.note = readNote();
+  if (S.sheet.stopping) readLeftover();
+  if (S.sheet.startOffset === 'custom') S.sheet.customTime = fromInput($('#custom-time')?.value) || S.sheet.customTime;
+}
 // Keep typed values when the card redraws after a tap.
 function keepSleepInputs() {
   if (S.sheet.d) S.sheet.d.tempC = readTemp();
@@ -257,7 +272,7 @@ function renderHome(app) {
   const list = all();
   const now = Date.now();
   const sess = L.lastFeedSession(list);
-  const feedRun = L.runningFeed(list);
+  const feedRun = L.runningFeed(list), bottleRun = L.runningBottle(list);
   const diaper = L.lastDiaper(list);
   const sl = L.sleepState(list, now);
   const t = L.todayTotals(list, now);
@@ -266,6 +281,8 @@ function renderHome(app) {
   let feedTile;
   if (feedRun) feedTile = `<button class="tile feed running" data-edit="${feedRun.id}"><div class="label">Feeding now</div>
       <div class="big" data-timer="${feedRun.start}">${clockTimer(now - feedRun.start)}</div><div class="small">${side(feedRun.kind)} breast</div></button>`;
+  else if (bottleRun) feedTile = `<button class="tile feed running" data-act="feed"><div class="label">Bottle feeding</div>
+      <div class="big" data-timer="${bottleRun.start}">${clockTimer(now - bottleRun.start)}</div><div class="small">${bottleRun.preparedMl ?? bottleRun.ml ?? 0} ml prepared</div></button>`;
   else if (sess) {
     const sides = sess.parts.map(p => L.isBreast(p) ? side(p.kind) : p.kind === 'bottle' ? `${p.ml} ml` : '').filter(Boolean).join(' + ');
     feedTile = `<div class="tile feed"><div class="label">Last feed</div><div class="big" data-ago="${sess.start}">${ago(sess.start)}</div>
@@ -292,6 +309,7 @@ function renderHome(app) {
     : `<button class="act sleep" data-act="sleep"><span class="emoji">😴</span>Sleep<span class="hint">${sl ? `awake ${ago(sl.since)}` : 'start'}</span></button>`;
   const feedBtn = feedRun
     ? `<button class="act feed running" data-act="stopfeed"><span class="emoji">⏹️</span>Stop feed<span class="hint" data-timer="${feedRun.start}">${side(feedRun.kind)} ${clockTimer(now - feedRun.start)}</span></button>`
+    : bottleRun ? `<button class="act feed running" data-act="feed"><span class="emoji">🍼</span>Stop bottle<span class="hint" data-timer="${bottleRun.start}">${clockTimer(now - bottleRun.start)}</span></button>`
     : `<button class="act feed" data-act="feed"><span class="emoji">🍼</span>Feed<span class="hint">next: ${side(next)}</span></button>`;
 
   const st = L.stockTotals(S.milk, now);
@@ -343,6 +361,10 @@ function openSheet(kind, data = {}) {
 function closeSheet(fromBack = false) {
   if (!S.sheet) return;
   if (S.sheet.kind === 'sleep' && S.sheet.runningId) saveRunningSleepText();
+  if (S.sheet.kind === 'feed' && S.sheet.runningId) {
+    const e = all().find(x => x.id === S.sheet.runningId), note = readNote();
+    if (e && e.end == null && note !== (e.note || '')) db.saveEntry(e.id, { note });
+  }
   S.sheet = null;
   $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true;
   if (!fromBack) { S.ignorePop = true; history.back(); }
@@ -350,7 +372,7 @@ function closeSheet(fromBack = false) {
 }
 
 function timeChips() {
-  const opts = [[null, 'Now'], [5, '5 min ago'], [15, '15 min ago'], [30, '30 min ago'], [60, '1 h ago']];
+  const opts = [[null, 'Now'], [5, '5 min ago'], [10, '10 min ago'], [15, '15 min ago'], [30, '30 min ago'], [60, '1 h ago']];
   const sel = S.sheet.startOffset ?? null;
   const custom = S.sheet.startOffset === 'custom';
   return `<div class="timeline-chips">${opts.map(([v, l]) => `<button class="chip ${sel === v ? 'on' : ''}" data-offset="${v ?? ''}">${l}</button>`).join('')}
@@ -374,20 +396,7 @@ function drawSheet() {
   const list = all();
   let body = '';
   if (sh.kind === 'feed') {
-    const next = L.nextSide(list);
-    const bottle = sh.bottle ?? L.lastAmount(list, 'bottle', 60);
-    sh.bottle = bottle;
-    body = `<div class="sheet-title"><h2>Feed</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-      ${timeChips()}
-      <div class="choices">
-        ${['left', 'right'].map(k => `<button class="big-choice ${k === next ? 'suggested' : ''}" data-feed="${k}">
-          <span class="emoji">🤱</span>${side(k)}<small>${k === next ? 'next side · starts timer' : 'starts timer'}</small></button>`).join('')}
-      </div>
-      <div class="amount"><div class="top"><span class="label">🍼 Bottle</span>
-        <div class="stepper"><button data-step="bottle:-10">−</button><span class="val">${bottle} ml</span><button data-step="bottle:10">+</button></div></div>
-        ${bottleSourceBlock()}
-        <button class="save" data-feed="bottle">Log bottle · ${bottle} ml${sh.source === 'formula' ? ' formula' : ''}</button></div>
-      ${noteBlock()}`;
+    body = feedBody();
   } else if (sh.kind === 'pump') {
     body = pumpBody();
   } else if (sh.kind === 'pumped') {
@@ -419,13 +428,128 @@ function drawSheet() {
   el.innerHTML = `<div class="grabzone" aria-hidden="true"><div class="grab"></div></div>${body}`;
 }
 
-// ---------- Bottle from stock ----------
-// Portions picked for this bottle: the ones tapped by hand, or else the oldest fridge milk.
-function bottlePicks() {
+// ---------- Feed card ----------
+// Top to bottom: time chips, Left / Right (each starts a breast timer), a full-width Bottle button
+// that opens the bottle panel, + Add a note, then "Start bottle feeding".
+// The bottle panel: Breast milk / Other, the target ml, and the bags to take from. Start only
+// works once the bags picked cover the target. Starting takes the picked ml out of stock (the
+// bottle is now prepared) and starts a timer. "Stop bottle feeding" then asks how many ml the
+// baby left over (thrown away), and Save records eaten = prepared - leftover.
+function feedBody() {
+  const sh = S.sheet, list = all();
+  const running = L.runningBottle(list);
+  const head = `<div class="sheet-title"><h2>Feed</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>`;
+  if (running) return head + runningBottleBody(running);
+  const next = L.nextSide(list);
+  sh.target ??= L.lastTarget(list, 60);
+  return `${head}${timeChips()}
+    <div class="choices">
+      ${['left', 'right'].map(k => `<button class="big-choice ${k === next ? 'suggested' : ''}" data-feed="${k}">
+        <span class="emoji">🤱</span>${side(k)}<small>${k === next ? 'next side · starts timer' : 'starts timer'}</small></button>`).join('')}
+    </div>
+    <button class="bottle-btn ${sh.bottleOpen ? 'on' : ''}" data-act="bottle"><span class="emoji">🍼</span>Bottle<small>${sh.bottleOpen ? 'tap to hide' : 'pick milk · starts timer'}</small></button>
+    ${sh.bottleOpen ? bottlePanel() : ''}
+    ${noteBlock()}
+    ${sh.bottleOpen ? startBottleButton() : ''}`;
+}
+function bottlePanel() {
   const sh = S.sheet;
-  const live = S.milk.filter(L.inStock).map(p => p.id);
-  if (sh.picks) return sh.picks.filter(id => live.includes(id));
-  return L.autoPick(S.milk, sh.bottle);
+  const srcChips = `<div class="seg src"><button class="chip ${sh.source !== 'other' ? 'on' : ''}" data-src="breast">Breast milk</button>
+    <button class="chip ${sh.source === 'other' ? 'on' : ''}" data-src="other">Other</button></div>`;
+  const target = `<div class="amount"><div class="top"><span class="label">${sh.source === 'other' ? 'Amount' : 'Target'}</span>
+      <div class="stepper"><button data-step="target:-10">−</button><span class="val">${sh.target} ml</span><button data-step="target:10">+</button></div></div></div>`;
+  if (sh.source === 'other') return `${srcChips}${target}`;
+  return `${srcChips}${target}${bagList()}`;
+}
+// The bag list for a breast-milk bottle. Tapping a bag picks it (taking only what's still needed);
+// a picked bag gets − / + to change how much comes from it. Tap the bag again to unpick it.
+function bagList() {
+  const sh = S.sheet;
+  const live = new Set(S.milk.filter(L.inStock).map(p => p.id));
+  sh.picks = (sh.picks || []).filter(x => live.has(x.id)); // a bag used up on the other phone drops out
+  const feedAt = sheetStart(), w = L.timeWindow(feedAt);
+  const rows = L.bottleStock(S.milk, feedAt);
+  const selected = L.pickedMl(sh.picks);
+  const counter = `<p class="counter ${selected >= sh.target ? '' : 'off'}" id="bottle-count">${selected} of ${sh.target} ml selected${selected >= sh.target ? ' ✓' : ''}</p>`;
+  if (!rows.length) return `<p class="fine">No milk in the fridge or at room temperature. Thaw a bag in Milk stock, or switch to Other.</p>${counter}`;
+  let html = '', group = null;
+  for (const { p, same, expired } of rows) {
+    const g = expired ? 'expired' : same ? 'same' : 'other';
+    if (g !== group) {
+      group = g;
+      html += `<div class="section-label">${g === 'same' ? `Pumped in the ${L.WINDOWS[w].toLowerCase()} · use first` : g === 'other' ? 'Other times of day' : 'Expired · can\'t be used'}</div>`;
+    }
+    const pick = sh.picks.find(x => x.id === p.id);
+    const pf = L.milkFlag(p);
+    const extra = pick ? `<span class="num-in take-in"><button data-bstep="${p.id}:-5" aria-label="Less">−</button><b>${pick.ml} ml</b><button data-bstep="${p.id}:5" aria-label="More">+</button></span>` : '';
+    html += `<div class="milkpick ${pick ? 'on' : ''} ${expired ? 'expired' : pf}">
+      <button class="milkrow ${pick ? 'on' : ''} ${pf}" ${expired ? 'disabled' : `data-pick="${p.id}"`}>
+        <span class="code">${esc(p.code)}</span>
+        <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]} · ${L.WINDOWS[L.timeWindow(p.pumpedAt)]}
+          <small>pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span></button>${extra}</div>`;
+  }
+  return `${html}${counter}`;
+}
+function startBottleButton() {
+  const sh = S.sheet, ok = L.canStartBottle(sh.source, sh.target, sh.picks || []);
+  const short = sh.target - L.pickedMl(sh.picks || []);
+  return `<button class="save bottle-go" data-act="startbottle" ${ok ? '' : 'disabled'}>▶ Start bottle feeding</button>
+    ${ok ? '' : `<p class="fine center">${sh.source === 'other' ? 'Set an amount first.' : `Pick ${short} ml more from the bags to start.`}</p>`}`;
+}
+function runningBottleBody(e) {
+  const sh = S.sheet;
+  sh.runningId = e.id;
+  if (sh.showNote == null || sh.noteFor !== e.id) { sh.noteFor = e.id; sh.note = e.note || ''; sh.showNote = !!e.note; }
+  const prepared = e.preparedMl ?? e.ml ?? 0;
+  const from = isOther(e) ? 'Other' : (e.uses || []).map(u => `${u.ml} ml from ${esc(u.code)}`).join(' + ') || 'Breast milk';
+  const info = `<div class="bottle-running"><div class="label">🍼 Bottle feeding</div>
+      <div class="clock" data-timer="${e.start}">${clockTimer(Date.now() - e.start)}</div>
+      <div class="fine">${prepared} ml prepared · ${from}<br>started ${clock(e.start)} · target ${e.targetMl ?? prepared} ml</div></div>`;
+  if (!sh.stopping) return `${info}${noteBlock()}
+    <button class="save bottle-go running" data-act="stopbottle">⏹ Stop bottle feeding</button>`;
+  sh.leftover ??= 0;
+  const eaten = L.bottleResult(prepared, sh.leftover).ml;
+  return `${info}
+    <div class="amount"><div class="top"><span class="label">Left over, thrown away</span>
+      <span class="num-in big"><button data-lstep="-5">−</button><input type="number" inputmode="numeric" min="0" max="${prepared}" id="leftover" value="${sh.leftover}"><span>ml</span><button data-lstep="5">+</button></span></div>
+      <p class="fine" id="eaten" style="margin:8px 0 0">Baby ate <b>${eaten} ml</b> of ${prepared} ml.</p></div>
+    ${noteBlock()}
+    <div class="btn-row"><button class="btn" data-act="stopback">Back</button><button class="btn primary" data-act="savebottle">Save</button></div>`;
+}
+function readLeftover() {
+  const el = $('#leftover');
+  if (el) S.sheet.leftover = Math.max(0, Math.round(Number(el.value) || 0));
+  return S.sheet.leftover ?? 0;
+}
+function startBottle() {
+  const sh = S.sheet;
+  if (!L.canStartBottle(sh.source, sh.target, sh.picks || [])) return;
+  const startAt = sheetStart(), note = readNote(), source = sh.source === 'other' ? 'other' : 'breast';
+  const uses = source === 'breast' ? sh.picks.map(x => {
+    const p = S.milk.find(m => m.id === x.id);
+    return { id: x.id, code: p.code, ml: x.ml, place: p.place, pumpedAt: p.pumpedAt, window: L.timeWindow(p.pumpedAt) };
+  }) : [];
+  const preparedMl = source === 'breast' ? L.pickedMl(uses) : sh.target;
+  const backdated = Date.now() - startAt > L.MIN;
+  closeSheet();
+  logEntry({ type: 'feed', kind: 'bottle', start: startAt, note, source, uses, targetMl: sh.target, preparedMl, ml: preparedMl,
+    leftoverMl: null, window: L.timeWindow(startAt) },
+    { toastText: `Bottle started · ${preparedMl} ml${backdated ? ` at ${clock(startAt)}` : ''}`, extra: () => [] });
+}
+function saveBottle() {
+  const sh = S.sheet, e = all().find(x => x.id === sh.runningId);
+  if (!e) return closeSheet();
+  const prepared = e.preparedMl ?? e.ml ?? 0;
+  const { ml, leftoverMl } = L.bottleResult(prepared, readLeftover());
+  const end = Math.max(Date.now(), e.start), note = readNote();
+  db.saveEntry(e.id, { end, ml, leftoverMl, note });
+  sh.runningId = null;
+  closeSheet();
+  buzz();
+  toast(`Bottle · ate ${ml} ml${leftoverMl ? `, ${leftoverMl} thrown away` : ''} · ${dur(end - e.start)}`, [
+    { label: 'Undo', fn: () => db.saveEntry(e.id, { end: null, ml: prepared, leftoverMl: null }) },
+    { label: 'Edit', fn: () => openEdit(e.id) },
+  ]);
 }
 function milkRow(p, attrs, on, extra = '') {
   const f = L.milkFlag(p);
@@ -433,26 +557,6 @@ function milkRow(p, attrs, on, extra = '') {
     <span class="code">${esc(p.code)}</span>
     <span class="mid"><b>${p.left === p.ml ? `${p.left} ml` : `${p.left} of ${p.ml} ml`}</b> · ${PLACE[p.place]}${p.container ? ` · ${CONTAINER[p.container]}` : ''}
       <small>pumped ${shortDate(p.pumpedAt)}, ${clock(p.pumpedAt)} · ${untilText(L.milkExpiry(p))}</small></span>${extra}</button>`;
-}
-function bottleSourceBlock() {
-  const sh = S.sheet;
-  const srcChips = `<div class="seg src"><button class="chip ${sh.source !== 'formula' ? 'on' : ''}" data-src="breast">Breast milk</button>
-    <button class="chip small ${sh.source === 'formula' ? 'on' : ''}" data-src="formula">Formula</button></div>`;
-  if (sh.source === 'formula') return srcChips;
-  const stock = L.stockList(S.milk);
-  if (!stock.length) return `${srcChips}<p class="fine">No milk in stock, so this bottle won't take from any bag.</p>`;
-  const picks = bottlePicks();
-  const { uses, short } = L.planUse(S.milk, picks, sh.bottle);
-  const fridge = stock.filter(L.inFridge), frozen = stock.filter(p => !L.inFridge(p));
-  const showFrozen = sh.showFreezer || frozen.some(p => picks.includes(p.id));
-  const rows = list => list.map(p => {
-    const u = uses.find(x => x.id === p.id);
-    return milkRow(p, `data-pick="${p.id}"`, picks.includes(p.id), `<span class="take">${u ? `−${u.ml} ml` : ''}</span>`);
-  }).join('');
-  return `${srcChips}<div class="section-label">From stock (oldest first)</div>
-    ${fridge.length ? rows(fridge) : '<p class="fine">Nothing in the fridge.</p>'}
-    ${frozen.length ? (showFrozen ? `<div class="section-label">Freezer</div>${rows(frozen)}` : `<button class="notebtn" data-act="showfreezer">Show freezer (${frozen.length})</button>`) : ''}
-    <p class="fine">${uses.length ? `Takes ${uses.map(u => `${u.ml} ml from ${esc(u.code)}`).join(' and ')}.` : 'No bag picked: tap one to take from it.'}${short && uses.length ? ` ${short} ml not covered by the picked bags.` : ''}</p>`;
 }
 // Undo/delete: a bottle puts its milk back; a pump removes its bags.
 function returnMilk(e) {
@@ -701,23 +805,27 @@ function editBody() {
   const d = S.sheet.draft;
   const kinds = d.type === 'feed' ? [['left', 'Left'], ['right', 'Right'], ['bottle', 'Bottle'], ...(d.kind === 'pump' ? [['pump', 'Pump']] : [])]
     : d.type === 'diaper' ? [['wet', 'Wet'], ['dirty', 'Dirty'], ['both', 'Both']] : [];
-  const hasEnd = d.type === 'sleep' || L.isBreast(d) || (d.type === 'pump' && d.end != null && d.end !== d.start);
-  const hasMl = d.type === 'feed' && (d.kind === 'bottle' || d.kind === 'pump');
+  const timedBottle = L.isBottle(d) && d.preparedMl != null; // bottles from Nov 2026 on have a timer
+  const hasEnd = d.type === 'sleep' || L.isBreast(d) || timedBottle || (d.type === 'pump' && d.end != null && d.end !== d.start);
+  const hasMl = d.type === 'feed' && (d.kind === 'bottle' || d.kind === 'pump') && !timedBottle;
   const title = { feed: 'Edit feed', diaper: 'Edit diaper', sleep: 'Edit sleep', pump: `Edit pump${d.code ? ` · ${d.code}` : ''}` }[d.type];
   const milkInfo = d.type === 'pump'
     ? `<p class="fine">${side(d.kind)} breast · ${d.ml || 0} ml${d.bags?.length ? ` · ${d.bags.map(b => `${esc(b.code)} ${PLACE[b.place]} ${b.ml} ml`).join(', ')}`
         : `${d.fridgeMl ? ` · fridge ${d.fridgeMl} ml (${esc(d.code)})` : ''}${d.freezerMl ? ` · freezer ${d.freezerMl} ml (${esc(d.code)}-F)` : ''}`}.
         Changing the end time also moves the use-by dates. To change amounts, open the bag in Milk stock. Deleting this removes its bags from stock.</p>`
     : d.kind === 'bottle' && d.uses?.length
-      ? `<p class="fine">Took ${d.uses.map(u => `${u.ml} ml from ${esc(u.code)}`).join(', ')}. Changing the amount here doesn't change the stock; deleting puts the milk back.</p>`
-      : d.kind === 'bottle' && d.source === 'formula' ? '<p class="fine">Formula</p>' : '';
+      ? `<p class="fine">Took ${d.uses.map(u => `${u.ml} ml from ${esc(u.code)}`).join(', ')}. Changing amounts here doesn't change the stock; deleting puts the milk back.</p>`
+      : d.kind === 'bottle' && isOther(d) ? '<p class="fine">Other (not from stock)</p>' : '';
+  const bottleFields = timedBottle ? `<p class="fine">Target ${d.targetMl ?? '–'} ml · prepared ${d.preparedMl} ml${d.window ? ` · ${L.WINDOWS[d.window]}` : ''}</p>
+    <label class="field"><span>Left over, thrown away (ml)</span><input type="number" inputmode="numeric" min="0" id="ed-leftover" value="${d.leftoverMl ?? 0}"></label>
+    <p class="fine">Baby ate ${L.bottleResult(d.preparedMl, d.leftoverMl).ml} ml.</p>` : '';
   return `<div class="sheet-title"><h2>${title}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
     ${kinds.length ? `<div class="seg" style="margin-bottom:12px">${kinds.map(([k, l]) => `<button class="chip ${d.kind === k ? 'on' : ''}" data-kind="${k}">${l}</button>`).join('')}</div>` : ''}
     <label class="field"><span>${hasEnd ? 'Started' : 'Time'}</span><input type="datetime-local" id="ed-start" value="${toInput(d.start)}"></label>
     ${hasEnd ? (d.end == null
       ? `<div class="field"><span>Ended</span><button class="btn wide" data-act="endnow">Still going · tap to stop now</button></div>`
       : `<label class="field"><span>Ended</span><input type="datetime-local" id="ed-end" value="${toInput(d.end)}"></label>`) : ''}
-    ${d.type === 'sleep' ? sleepDetails(d) : ''}${milkInfo}
+    ${d.type === 'sleep' ? sleepDetails(d) : ''}${milkInfo}${bottleFields}
     ${hasMl ? `<label class="field"><span>Amount (ml)</span><input type="number" inputmode="numeric" id="ed-ml" value="${d.ml ?? ''}"></label>` : ''}
     ${d.type === 'diaper' ? `<div class="section-label">Colour</div><div class="timeline-chips">
       <button class="chip ${!d.color ? 'on' : ''}" data-dcolor="">None</button>
@@ -733,6 +841,7 @@ function readEditInputs() {
   const s = fromInput($('#ed-start')?.value); if (s) d.start = s;
   if ($('#ed-end')) d.end = fromInput($('#ed-end').value);
   if ($('#ed-ml')) d.ml = Number($('#ed-ml').value) || 0;
+  if ($('#ed-leftover')) Object.assign(d, L.bottleResult(d.preparedMl, Number($('#ed-leftover').value) || 0));
   if (d.type === 'sleep') {
     if ($('#sl-temp')) d.tempC = readTemp();
     if ($('#sl-light') && $('#sl-light').checked !== !!d.nightLight) d.nightLight = $('#sl-light').checked;
@@ -745,9 +854,10 @@ function saveEdit() {
   const d = S.sheet.draft;
   const orig = all().find(x => x.id === d.id) || {};
   if (d.end != null && d.end < d.start) return toast('End is before start', []);
-  if (d.type === 'diaper' || (d.type === 'feed' && !L.isBreast(d))) d.end = d.start;
+  if (d.type === 'diaper' || (d.type === 'feed' && !L.isBreast(d) && !(L.isBottle(d) && d.preparedMl != null))) d.end = d.start;
+  if (L.isBottle(d) && d.preparedMl != null) d.window = L.timeWindow(d.start);
   const changed = {};
-  for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note', ...(d.type === 'sleep' ? L.SLEEP_FIELDS : [])]) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
+  for (const k of ['kind', 'start', 'end', 'ml', 'color', 'note', 'leftoverMl', 'window', ...(d.type === 'sleep' ? L.SLEEP_FIELDS : [])]) if ((d[k] ?? null) !== (orig[k] ?? null)) changed[k] = d[k] ?? null;
   if (Object.keys(changed).length) db.saveEntry(d.id, changed);
   if (d.type === 'pump' && ('start' in changed || 'end' in changed)) for (const pid of d.portions || []) db.saveMilk(pid, { pumpedAt: d.end ?? d.start });
   closeSheet();
@@ -821,13 +931,15 @@ function renderSettings(app) {
 
 function exportCsv() {
   const rows = [['type', 'kind', 'start', 'end', 'minutes', 'ml', 'color', 'note', 'logged_by',
-    'day_night', 'cover', 'location', 'sound', 'night_light', 'room_temp_c', 'pump_code', 'bottle_source', 'milk_used']];
+    'day_night', 'cover', 'location', 'sound', 'night_light', 'room_temp_c', 'pump_code', 'bottle_source', 'milk_used',
+    'bottle_target_ml', 'bottle_prepared_ml', 'bottle_leftover_ml', 'time_of_day']];
   for (const e of all()) {
     rows.push([e.type, e.kind || '', new Date(e.start).toISOString(), e.end ? new Date(e.end).toISOString() : '',
       e.end ? Math.round((e.end - e.start) / L.MIN) : '', e.ml ?? '', e.color || '', e.note || '', e.by || '',
       e.period || '', optLabel('cover', e.cover), optLabel('location', e.location), optLabel('sound', e.sound),
       e.type === 'sleep' && e.nightLight != null ? (e.nightLight ? 'yes' : 'no') : '', e.tempC ?? '',
-      e.code || '', e.source || '', (e.uses || []).map(u => `${u.code} ${u.ml} ml`).join('; ')]);
+      e.code || '', isOther(e) ? 'other' : e.source || '', (e.uses || []).map(u => `${u.code} ${u.ml} ml`).join('; '),
+      e.targetMl ?? '', e.preparedMl ?? '', e.leftoverMl ?? '', e.window || '']);
   }
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
@@ -958,6 +1070,7 @@ document.addEventListener('click', ev => {
   if (ds.edit) {
     const e = list.find(x => x.id === ds.edit);
     if (e?.type === 'pumpsession') return e.end == null ? undefined : openPumpCard(e);
+    if (e && L.isBottle(e) && e.end == null) return openSheet('feed', { source: 'breast', picks: [], showNote: null }); // running bottle: its card
     return openEdit(ds.edit);
   }
   if (ds.themePick) { store.set('theme', ds.themePick); applyTheme(); return render(); }
@@ -968,6 +1081,7 @@ document.addEventListener('click', ev => {
   if (ds.offset != null) {
     if (S.sheet.showNote) S.sheet.note = readNote();
     if (S.sheet.kind === 'sleep') keepSleepInputs();
+    if (S.sheet.kind === 'feed') keepFeedInputs();
     S.sheet.startOffset = ds.offset === '' ? null : ds.offset === 'custom' ? 'custom' : +ds.offset;
     if (S.sheet.kind === 'sleep' && !S.sheet.periodTouched) S.sheet.d.period = L.dayOrNight(sheetStart());
     return drawSheet();
@@ -992,31 +1106,33 @@ document.addEventListener('click', ev => {
   }
   if (ds.step) {
     const [k, d] = ds.step.split(':');
-    if (S.sheet.showNote) S.sheet.note = readNote();
+    keepFeedInputs();
     S.sheet[k] = Math.max(0, S.sheet[k] + +d);
     return drawSheet();
   }
   if (ds.color) { S.sheet.color = S.sheet.color === ds.color ? null : ds.color; if (S.sheet.showNote) S.sheet.note = readNote(); return drawSheet(); }
   if (ds.feed) {
     const startAt = sheetStart(), note = readNote(), k = ds.feed;
-    const ml = S.sheet.bottle;
     const backdated = Date.now() - startAt > L.MIN;
-    const source = S.sheet.source || 'breast';
-    const uses = source === 'breast' ? L.planUse(S.milk, bottlePicks(), ml).uses : [];
     closeSheet();
-    if (k === 'left' || k === 'right') {
-      return logEntry({ type: 'feed', kind: k, start: startAt, note }, { toastText: `${side(k)} breast started${backdated ? ` at ${clock(startAt)}` : ''}`, extra: () => [] });
-    }
-    const from = uses.length ? ` from ${uses.map(u => u.code).join(' + ')}` : source === 'formula' ? ' formula' : '';
-    return logEntry({ type: 'feed', kind: 'bottle', start: startAt, ml, note, source, uses }, { toastText: `Bottle · ${ml} ml${from} saved`, extra: () => [] });
+    return logEntry({ type: 'feed', kind: k, start: startAt, note }, { toastText: `${side(k)} breast started${backdated ? ` at ${clock(startAt)}` : ''}`, extra: () => [] });
   }
-  if (ds.src) { if (S.sheet.showNote) S.sheet.note = readNote(); S.sheet.source = ds.src; return drawSheet(); }
+  if (ds.src) { keepFeedInputs(); S.sheet.source = ds.src; return drawSheet(); }
   if (ds.pick) {
-    if (S.sheet.showNote) S.sheet.note = readNote();
-    const cur = bottlePicks();
-    S.sheet.picks = cur.includes(ds.pick) ? cur.filter(x => x !== ds.pick) : [...cur, ds.pick];
+    keepFeedInputs();
+    const sh = S.sheet, p = S.milk.find(x => x.id === ds.pick);
+    if (!p) return drawSheet();
+    if (sh.picks.some(x => x.id === p.id)) sh.picks = sh.picks.filter(x => x.id !== p.id);
+    else sh.picks.push({ id: p.id, ml: L.takeFrom(p.left, sh.target, L.pickedMl(sh.picks)) });
     return drawSheet();
   }
+  if (ds.bstep) {
+    keepFeedInputs();
+    const [id, d] = ds.bstep.split(':'), x = S.sheet.picks.find(y => y.id === id), p = S.milk.find(m => m.id === id);
+    if (x && p) x.ml = Math.max(1, Math.min(p.left, x.ml + +d));
+    return drawSheet();
+  }
+  if (ds.lstep) { keepFeedInputs(); S.sheet.leftover = Math.max(0, (S.sheet.leftover || 0) + +ds.lstep); return drawSheet(); }
   if (ds.pstep || ds.pplace || ds.pcont || ds.addbag || ds.rmbag) {
     const sh = S.sheet; if (sh.showNote) sh.note = readNote();
     if (ds.pstep) {
@@ -1049,7 +1165,12 @@ document.addEventListener('click', ev => {
   if (ds.dcolor != null) { readEditInputs(); S.sheet.draft.color = ds.dcolor || null; return drawSheet(); }
 
   switch (ds.act) {
-    case 'feed': return openSheet('feed', { source: 'breast', picks: null });
+    case 'feed': return openSheet('feed', { source: 'breast', picks: [], bottleOpen: false, showNote: null });
+    case 'bottle': keepFeedInputs(); S.sheet.bottleOpen = !S.sheet.bottleOpen; return drawSheet();
+    case 'startbottle': return startBottle();
+    case 'stopbottle': keepFeedInputs(); S.sheet.stopping = true; S.sheet.leftover = 0; return drawSheet();
+    case 'stopback': keepFeedInputs(); S.sheet.stopping = false; return drawSheet();
+    case 'savebottle': return saveBottle();
     case 'pump': return pumpTap();
     case 'savepump': return savePump();
     case 'discardsession':
@@ -1060,7 +1181,6 @@ document.addEventListener('click', ev => {
       if (!S.sheet.confirmDiscard) { S.sheet.confirmDiscard = true; return drawSheet(); }
       return discardMilk();
     case 'savemilk': return saveMilkEdit();
-    case 'showfreezer': S.sheet.showFreezer = true; return drawSheet();
     case 'diaper': return openSheet('diaper');
     case 'sleep': return openSleep();
     case 'stopsleep': return stopSleep();
@@ -1092,6 +1212,12 @@ document.addEventListener('click', ev => {
 // Tapping the dimmed area does nothing, so a mistap can't lose an entry. Swipe down there (or on the handle) to close.
 
 document.addEventListener('input', ev => {
+  if (S.sheet?.kind === 'feed' && ev.target.id === 'leftover') {
+    const e = all().find(x => x.id === S.sheet.runningId), prepared = e ? e.preparedMl ?? e.ml ?? 0 : 0;
+    const r = L.bottleResult(prepared, readLeftover());
+    const el = $('#eaten'); if (el) el.innerHTML = `Baby ate <b>${r.ml} ml</b> of ${prepared} ml.${r.leftoverMl !== S.sheet.leftover ? ' (left over can\'t be more than prepared)' : ''}`;
+    return;
+  }
   if (!S.sheet || S.sheet.kind !== 'pump' || !ev.target.dataset.pin) return;
   pumpInput(ev.target);
   // Refresh counters and the save button without redrawing (keeps the keyboard open).
