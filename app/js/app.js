@@ -324,8 +324,13 @@ function renderHome(app) {
 
   const st = L.stockTotals(S.milk, now);
   const flag = st.expired ? `<span class="flag bad">${st.expired} expired</span>` : st.soon ? `<span class="flag soon">${st.soon} use soon</span>` : '';
-  const stockLine = `<button class="stockline" data-nav="stock"><span class="emoji">🧊</span>
-    ${st.room || st.fridge || st.freezer ? `<span><small class="sl-title">Milk stock</small>${st.room ? `Room <b>${st.room} ml</b> · ` : ''}Fridge <b>${st.fridge} ml</b> · Freezer <b>${st.freezer} ml</b></span>` : '<span><small class="sl-title">Milk stock</small>Empty</span>'}${flag}<span class="chev">›</span></button>`;
+  // Title on top, then the amounts side by side in columns: (🏠 Room) ❄️ Fridge 🧊 Freezer, each with its ml.
+  const amounts = st.room || st.fridge || st.freezer
+    ? [st.room ? ['room', 'Room', st.room] : null, ['fridge', 'Fridge', st.fridge], ['freezer', 'Freezer', st.freezer]].filter(Boolean)
+      .map(([k, l, ml]) => `<span class="sl-col"><small>${PLACE_EMOJI[k]} ${l}</small> <b>${ml} ml</b></span>`).join('')
+    : '<span>Empty</span>';
+  const stockLine = `<button class="stockline" data-nav="stock"><span class="sl-body"><small class="sl-title">Milk stock</small>
+    <span class="sl-row">${amounts}</span></span>${flag}<span class="chev">›</span></button>`;
   const lastP = L.lastPump(list), ps = L.openPumpSession(list);
   const pumpBtn = ps && ps.end == null
     ? `<button class="act pump running" data-act="pump"><span class="emoji">⏹️</span>Stop pump<span class="hint" data-timer="${ps.start}">${clockTimer(now - ps.start)}</span></button>`
@@ -795,7 +800,7 @@ function renderActivity(app) {
 function renderStock(app) {
   const stock = L.stockList(S.milk), st = L.stockTotals(S.milk);
   const room = stock.filter(p => p.place === 'room'), fridge = stock.filter(p => L.inFridge(p) && p.place !== 'room'), frozen = stock.filter(p => !L.inFridge(p));
-  const section = (name, list, empty) => `<div class="day">${name} · ${list.reduce((a, p) => a + p.left, 0)} ml</div>
+  const section = (name, list, empty) => `<div class="day">${PLACE_EMOJI[{ 'Room temp': 'room', Fridge: 'fridge', Freezer: 'freezer' }[name]]} ${name} · ${list.reduce((a, p) => a + p.left, 0)} ml</div>
     ${list.length ? list.map(p => milkRow(p, `data-milk="${p.id}"`, false, `${S.milkPending.has(p.id) ? '<span class="waiting-mark">⏳</span>' : ''}<span class="chev">›</span>`)).join('') : `<div class="empty" style="padding:12px">${empty}</div>`}`;
   app.innerHTML = `<div class="screen" style="padding-bottom:40px">
     <div class="topbar"><button class="iconbtn" data-nav="home" aria-label="Back">←</button><div class="grow"><h1>Milk stock</h1>
