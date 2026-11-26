@@ -136,7 +136,16 @@ export function sleepDefaults(list, t = Date.now()) {
 // Codes: side + number + place letter, e.g. L-004-B. When one place on a side holds two or more
 // portions, those get numbers instead (L-004-1, L-004-2). Records made before Nov 2026's rework
 // keep their old BPL-/BPR- codes.
-export const MILK_RULES = { roomHours: 4, fridgeDays: 4, freezerMonths: 6, thawedHours: 24 };
+export const MILK_RULES = { roomHours: 4, fridgeDays: 4, freezerMonths: 6, thawedHours: 24, defrostHours: 12 };
+
+// A bag moved from the freezer ("Defrost") needs 12 h in the fridge before it's ready. Until then it's
+// "defrosting" (grey). "Use now" marks it ready early (readyAt + usedEarly), e.g. after the bottle warmer.
+// Its 24 h use-by still counts from when Defrost was pressed.
+export function readyAt(p) {
+  if (p.place !== 'thawed') return null;
+  return p.readyAt ?? (p.thawedAt ?? 0) + MILK_RULES.defrostHours * HOUR;
+}
+export const isDefrosting = (p, now = Date.now()) => p.place === 'thawed' && now < readyAt(p);
 export const PLACE_LETTER = { room: 'A', fridge: 'B', freezer: 'C' };
 
 export function pumpCode(side, seq) {
@@ -272,12 +281,16 @@ export function timeWindow(t = Date.now()) {
 // thawing first, so it isn't listed here). Bags pumped in the same part of the day as the feed come
 // first, then the rest; inside each group the one that expires first comes first. Expired bags go
 // last, marked so the screen can grey them out.
-// Returns [{ p, same, expired }].
+// Bags still defrosting (under 12 h) come after the ready ones, shown but not pickable.
+// Returns [{ p, same, expired, defrosting }].
 export function bottleStock(portions, feedTime = Date.now(), now = Date.now()) {
   const w = timeWindow(feedTime);
   return portions.filter(p => inStock(p) && inFridge(p))
-    .map(p => ({ p, same: timeWindow(p.pumpedAt) === w, expired: milkFlag(p, now) === 'expired' }))
-    .sort((a, b) => a.expired - b.expired || b.same - a.same || milkExpiry(a.p) - milkExpiry(b.p) || a.p.pumpedAt - b.p.pumpedAt);
+    .map(p => {
+      const expired = milkFlag(p, now) === 'expired';
+      return { p, same: timeWindow(p.pumpedAt) === w, expired, defrosting: !expired && isDefrosting(p, now) };
+    })
+    .sort((a, b) => a.expired - b.expired || a.defrosting - b.defrosting || b.same - a.same || milkExpiry(a.p) - milkExpiry(b.p) || a.p.pumpedAt - b.p.pumpedAt);
 }
 
 // Tapping a bag takes only what is still needed to reach the target (at least 1 ml), up to what's in it.
