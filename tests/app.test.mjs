@@ -23,6 +23,11 @@ const drag = (p, sel, dx, dy) => p.evaluate(({ sel, dx, dy }) => {
   fire('touchend', x0 + dx, y0 + dy);
 }, { sel, dx, dy });
 const has = async (p, text, ms = 8000) => { try { await p.getByText(text, { exact: false }).first().waitFor({ timeout: ms }); return true; } catch { return false; } };
+// Records live on the Activity screen (📋 in the top bar).
+const onAct = p => p.isVisible('.activity-screen');
+const toAct = async p => { if (!(await onAct(p))) await p.click('[data-nav="activity"]'); await p.locator('.activity-screen').waitFor(); };
+const toHome = async p => { if (await onAct(p)) await p.click('.activity-screen [data-nav="home"]'); await p.locator('.bar').waitFor(); };
+const hasRow = async (p, text) => { await toAct(p); const r = await has(p, text); await toHome(p); return r; };
 
 // Setup on A
 await A.goto(URL0);
@@ -41,10 +46,11 @@ check(await has(B, 'Join the baby log'), 'B: join screen');
 await B.click('[data-setup="Ana Rita"]');
 check(await has(B, 'Pico'), 'B: joined and sees baby name from A');
 
-// Activity list starts collapsed; one tap opens it
-check(await A.isVisible('.activity-head:has-text("Activity")') && await A.locator('.activity .row, .activity .empty').count() === 0, 'Activity starts collapsed');
-await A.click('[data-act="activity"]'); await B.click('[data-act="activity"]');
-check(await A.isVisible('.activity .empty'), 'Tapping Activity opens the list');
+// Records are not on the home screen; the 📋 button opens the Activity screen
+check(await A.locator('#app .row').count() === 0 && await A.isVisible('.topbar [data-nav="activity"]'), 'Home has no record list, Activity button in the top bar');
+await toAct(A); check(await has(A, 'Nothing logged yet'), 'Activity screen opens (empty)');
+await drag(A, '.activity-screen .topbar', 0, 200); await sleep(400);
+check(await A.isVisible('.bar') && !(await onAct(A)), 'Swiping down on the Activity top bar goes back home');
 
 // A starts left feed (2 taps)
 const t0 = Date.now();
@@ -55,7 +61,6 @@ check(await has(B, 'Stop feed'), 'B: sees the running feed live');
 await sleep(1200);
 await B.click('[data-act="stopfeed"]');
 check(await has(B, 'saved'), 'B: stopped the feed, toast shown');
-check(await B.isVisible('.activity-head:has-text("1 today")'), 'Activity header counts today\'s entries');
 await drag(B, '#toast', 30, 0); await sleep(300);
 check(await B.isVisible('#toast'), 'Toast: a short drag does not dismiss it');
 await drag(B, '#toast', 160, 0); await sleep(400);
@@ -69,7 +74,7 @@ check(await has(A, 'Dirty · Yellow'), 'A: sees B\'s dirty yellow diaper');
 // Bottle with stepper, backdated 30 min
 await A.click('[data-act="feed"]'); await A.click('[data-offset="30"]'); await A.click('[data-step="bottle:10"]'); await A.click('[data-step="bottle:10"]');
 await A.click('[data-feed="bottle"]');
-check(await has(A, 'Bottle · 80 ml'), 'A: bottle 80 ml logged (default 60 + 20)');
+check(await hasRow(A, 'Bottle · 80 ml'), 'A: bottle 80 ml logged (default 60 + 20)');
 await A.click('[data-act="feed"]');
 check(await A.isVisible('text=Log bottle · 80 ml'), 'Bottle remembers last amount (80 ml)');
 await drag(A, '#sheet .choices', 0, 200); await sleep(300);
@@ -96,7 +101,7 @@ check(await A.locator('[data-sl^="cover:"].on').count() === 1, 'Cover allows one
 await A.screenshot({ path: shots + '/2-sleep-card.png' });
 await A.click('[data-act="close"]'); // closing keeps it counting and saves the typed temperature
 check(await A.isVisible('.act.sleep.running'), 'Closing the card keeps the sleep running');
-check(await has(B, 'Sleeping… · ' + (expected === 'day' ? '☀️' : '🌙') + ' · Crib · Swaddle'), 'B: sleep row shows day/night, place and cover');
+check(await hasRow(B, 'Sleeping… · ' + (expected === 'day' ? '☀️' : '🌙') + ' · Crib · Swaddle'), 'B: sleep row shows day/night, place and cover');
 await B.click('[data-act="sleep"]');
 check(await B.isVisible('[data-act="stopsleep"]'), 'B: card shows Woke up · stop while asleep');
 let seen = false; for (let i = 0; i < 20 && !seen; i++) { seen = await B.inputValue('#sl-temp') === '22.5' && await B.isChecked('#sl-light'); if (!seen) { await B.click('[data-act="close"]'); await sleep(400); await B.click('[data-act="sleep"]'); } }
@@ -109,24 +114,27 @@ await A.click('[data-act="close"]');
 await A.screenshot({ path: shots + '/2-home.png' });
 await B.click('[data-act="sleep"]'); await B.click('[data-act="stopsleep"]');
 check(await has(B, 'Woke up · slept'), 'B: stopping from the card saves the sleep');
-check(await has(A, 'Slept '), 'A: sees the finished sleep');
+check(await hasRow(A, 'Slept '), 'A: sees the finished sleep');
 await A.click('[data-act="sleep"]');
 check(await A.inputValue('#sl-temp') === '23' && await A.isVisible('.chip.on[data-sl="location:crib"]'), 'Next sleep: temp back to 23 °C, place remembered');
 await A.click('[data-act="close"]');
-await A.click('.row:has-text("Slept")'); await A.click('[data-sl="cover:blanket"]'); await A.click('[data-act="saveedit"]');
-check(await has(B, '· Crib · Blanket'), 'Editing a sleep changes its details (cover → Blanket)');
+await toAct(A); await A.click('.row:has-text("Slept")'); await A.click('[data-sl="cover:blanket"]'); await A.click('[data-act="saveedit"]');
+check(await onAct(A), 'After editing, you are back on the Activity screen');
+check(await hasRow(B, '· Crib · Blanket'), 'Editing a sleep changes its details (cover → Blanket)');
 
 // Edit: add a note to the diaper from A, and backdate
 await A.click('.row:has-text("Dirty")');
 await A.fill('#note', 'seedy, normal');
 await A.click('[data-act="saveedit"]');
-check(await has(B, 'seedy, normal'), 'B: sees note added on A');
+check(await hasRow(B, 'seedy, normal'), 'B: sees note added on A');
 
 // Delete with undo
+await toAct(B);
 await A.click('.row:has-text("Bottle")'); await A.click('[data-act="delete"]'); await A.click('[data-act="delete"]');
 check(await B.locator('.row:has-text("Bottle · 80 ml")').waitFor({ state: 'detached', timeout: 8000 }).then(() => true, () => false), 'B: deleted bottle disappears');
 await A.click('#toast [data-toast="0"]');
 check(await has(B, 'Bottle · 80 ml'), 'B: undo brings it back');
+await toHome(A); await toHome(B);
 
 // Pump and milk stock
 const stockText = async p => (await p.textContent('.stockline')).replace(/\s+/g, ' ').trim();
@@ -163,8 +171,10 @@ check(saved.join() === 'L-001-1,L-001-2,L-001-C,R-001-A', `Codes: two fridge bag
 check(await B.isVisible('.label-card.room:has-text("Room temp · Bottle · 60 ml")'), 'Saved card shows place, container and ml');
 await B.screenshot({ path: shots + '/9-pump-saved.png' });
 await B.click('[data-act="close"]');
+await toAct(A);
 check(await has(A, 'Pumped Right · 60 ml') && await has(A, '· R-001'), 'A: sees both sides saved as their own records');
-check(await A.locator('.row:has-text("Pumping")').count() === 0 && await A.isVisible('.act.pump:not(.running)'), 'Session row gone once saved');
+check(await A.locator('.row:has-text("Pumping")').count() === 0, 'Session row gone once saved');
+await toHome(A); check(await A.isVisible('.act.pump:not(.running)'), 'Pump button back to normal');
 // Both phones finish the same session at once: numbers must not clash
 await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="pump"]');
 await B.locator('.act.pump:has-text("Finish pump")').waitFor({ timeout: 8000 }); await B.click('[data-act="pump"]');
@@ -189,13 +199,40 @@ check(await A.locator('.milkrow:has-text("L-001-C")').count() === 0, 'Frozen bag
 for (let i = 0; i < 5; i++) await A.click('[data-step="bottle:-10"]'); // 80 → 30 ml
 await A.screenshot({ path: shots + '/10-bottle-from-stock.png' });
 await A.click('[data-feed="bottle"]');
-check(await has(A, 'Bottle · 30 ml · R-001-A'), 'Bottle row shows which bag it came from');
+check(await hasRow(A, 'Bottle · 30 ml · R-001-A'), 'Bottle row shows which bag it came from');
 line = await waitStock(B, 'Room 30 ml'); check(line.includes('Room 30 ml'), 'B: stock drops by 30 ml');
 await A.click('#toast [data-toast="0"]'); // undo
 line = await waitStock(B, 'Room 60 ml'); check(line.includes('Room 60 ml'), 'Undo puts the milk back');
 await A.click('[data-act="feed"]'); await A.click('[data-src="formula"]');
 check(await A.locator('.milkrow').count() === 0 && await A.isVisible('text=Log bottle · 80 ml formula'), 'Formula option hides the stock');
 await A.click('[data-act="close"]');
+// Activity filters
+await toAct(A);
+const rowCount = () => A.locator('.activity-screen .row').count();
+const total = await rowCount();
+check(total > 5 && await A.locator('.fdot').count() === 0, `Activity lists every record (${total}), no filter dot`);
+await A.click('[data-act="filters"]'); await A.click('[data-ftype="diaper"]');
+const diaperOnly = await A.locator('.activity-screen .row .ic').allTextContents();
+check(diaperOnly.length > 0 && diaperOnly.every(t => t === '🧷'), `Type filter shows only diapers (${diaperOnly.length})`);
+check(await A.isVisible('.fdot') && await A.isVisible('[data-act="fclear"]'), 'Filter on: dot and Clear show');
+await A.click('[data-ftype="sleep"]');
+const twoTypes = await A.locator('.activity-screen .row .ic').allTextContents();
+check(twoTypes.some(t => t === '😴') && twoTypes.every(t => t === '🧷' || t === '😴'), 'Two types at once');
+await A.click('[data-fall]'); await A.click('[data-fwho="Ana Rita"]');
+const tags = await A.locator('.activity-screen .row .who').allTextContents();
+check(await rowCount() > 0 && await rowCount() < total && tags.every(t => t === 'AR'), 'Logged-by filter shows only Ana Rita\'s records');
+await A.click('[data-fwho="any"]');
+const firstNew = await A.locator('.activity-screen .row .time').first().textContent();
+await A.click('[data-forder="old"]');
+const firstOld = await A.locator('.activity-screen .row .time').first().textContent();
+check(firstNew !== firstOld || total < 2, `Oldest first flips the order (${firstNew} → ${firstOld})`);
+await A.screenshot({ path: shots + '/12-activity-filters.png' });
+await A.click('[data-act="fclear"]');
+check(await rowCount() === total && await A.locator('.fdot').count() === 0, 'Clear brings everything back');
+await A.click('[data-ftype="feed"]'); await toHome(A); await toAct(A);
+check(await rowCount() === total && await A.locator('.fdot').count() === 0 && !(await A.isVisible('.filters')), 'Filters reset when Activity is opened again');
+await toHome(A);
+
 // Milk stock screen: thaw and discard
 await A.click('.stockline');
 check(await has(A, 'Milk stock') && await A.isVisible('.day:has-text("Room temp")') && await A.isVisible('.milkrow:has-text("L-001-C")'), 'Stock screen lists bags by place');
@@ -219,15 +256,15 @@ check(await has(A, 'Last feed'), 'Back button returns home');
 
 // Offline: A loses signal, logs a diaper, closes app, reopens offline
 await sleep(1500); // let the service worker cache files
+await B.goBack(); await has(B, 'Last feed'); await toAct(B); // B watches the list during the offline test
 const wetRows = p => p.locator('.row .what').filter({ hasText: /^Wet(?! \+)/ }).count();
-await B.goBack(); await has(B, 'Last feed');
 const bWetBefore = await wetRows(B); console.log('     B wet rows before:', bWetBefore);
 await ctxA.setOffline(true);
 await A.click('[data-act="diaper"]'); await A.click('[data-diaper="wet"]');
 check(await has(A, 'waiting to sync'), 'A offline: shows "waiting to sync"');
 await A.reload();
-await A.click('[data-act="activity"]');
-check(await has(A, 'Pico') && await has(A, 'Wet'), 'A offline: app reopens from the phone with the unsent entry');
+check(await has(A, 'Pico'), 'A offline: app reopens');
+check(await hasRow(A, 'Wet'), 'A offline: app reopens from the phone with the unsent entry');
 await sleep(2000); check(await wetRows(B) === bWetBefore, 'B: has not got it yet (A offline)');
 await ctxA.setOffline(false);
 let got = false; for (let i = 0; i < 30 && !got; i++) { got = (await wetRows(B)) === bWetBefore + 1; if (!got) await sleep(500); }

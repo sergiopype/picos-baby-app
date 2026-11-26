@@ -31,7 +31,7 @@ const S = {
   milk: [], milkPending: new Set(), // milk portions still holding milk
   view: 'home',
   sheet: null, // { kind, ...data } while a sheet is open
-  activityOpen: false, // the Activity list on the home screen; always starts collapsed when the app opens
+  af: null, // Activity screen filters; reset every time the screen opens (see afDefaults)
 };
 
 const $ = sel => document.querySelector(sel);
@@ -239,6 +239,7 @@ function render() {
   if (!S.fid || !S.me) return renderSetup(app);
   if (S.view === 'contacts') return renderContacts(app);
   if (S.view === 'stock') return renderStock(app);
+  if (S.view === 'activity') return renderActivity(app);
   if (S.view === 'settings') return renderSettings(app);
   renderHome(app);
 }
@@ -284,25 +285,6 @@ function renderHome(app) {
     <b>${t.wet}/${t.dirty}</b><span>wet / dirty</span>
     <b>${dur(t.sleepMs)}</b><span>sleep</span></div></div>`;
 
-  // Timeline grouped by day
-  let rows = '', lastDay = null;
-  for (const e of list) {
-    const d = dayLabel(e.start);
-    if (d !== lastDay) { rows += `<div class="day">${d}</div>`; lastDay = d; }
-    const { ic, what } = describe(e);
-    rows += `<button class="row" data-edit="${e.id}"><span class="ic">${ic}</span><span class="main">
-      <div class="what">${esc(what)}${whoTag(e.by)}${S.pending.has(e.id) ? ' <span class="waiting-mark">⏳</span>' : ''}</div>
-      ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}</span><span class="time">${clock(e.start)}</span></button>`;
-  }
-  if (!list.length) rows = `<div class="empty">Nothing logged yet.<br>Tap a big button below to start.</div>`;
-  // Activity: a fold-out list so the home screen stays clean. The header shows how much was logged today.
-  const todayCount = list.filter(e => e.start >= L.startOfDay(now)).length;
-  const activity = `<section class="activity${S.activityOpen ? ' open' : ''}">
-    <button class="activity-head" data-act="activity" aria-expanded="${S.activityOpen}">
-      <span class="title">Activity</span><span class="count">${todayCount} today</span><span class="chev">›</span></button>
-    ${S.activityOpen ? `${rows}<button class="more" data-act="older">Show earlier days</button>` : ''}
-  </section>`;
-
   const sleepBtn = sl?.asleep
     ? `<button class="act sleep running" data-act="sleep"><span class="emoji">🌤️</span>Woke up<span class="hint" data-ago="${sl.since}">${ago(sl.since)}</span></button>`
     : `<button class="act sleep" data-act="sleep"><span class="emoji">😴</span>Sleep<span class="hint">${sl ? `awake ${ago(sl.since)}` : 'start'}</span></button>`;
@@ -323,10 +305,10 @@ function renderHome(app) {
   app.innerHTML = `<div class="screen">
     <div class="topbar"><div class="grow"><h1>${esc(S.baby?.name || 'Baby')}</h1>
       <div class="sub">${esc(babyAge(S.baby?.birth))} ${syncBadge()}</div></div>
+      <button class="iconbtn" data-nav="activity" aria-label="Activity">📋</button>
       <button class="iconbtn" data-nav="contacts" aria-label="Contacts">📞</button>
       <button class="iconbtn" data-nav="settings" aria-label="Settings">⚙️</button></div>
     <div class="now">${feedTile}${diaperTile}${sleepTile}${todayTile}</div>
-    ${activity}
   </div>
   <div class="bar"><div class="bar-wrap">${stockLine}<div class="bar-inner">${feedBtn}
     ${pumpBtn}
@@ -604,6 +586,56 @@ function discardSession() {
   db.saveEntry(id, { deleted: true });
   closeSheet();
   toast('Pump session discarded', [{ label: 'Undo', fn: () => db.saveEntry(id, { deleted: false }) }]);
+}
+
+// ---------- Activity ----------
+// Every record, grouped by day, with filters. Tap a record to edit it.
+const afDefaults = () => ({ types: [], when: '7d', who: 'any', order: 'new', open: false });
+const AF_TYPES = [['feed', '🍼 Feed'], ['diaper', '🧷 Diaper'], ['sleep', '😴 Sleep'], ['pump', '🫙 Pump']];
+const AF_WHEN = [['today', 'Today'], ['24h', 'Last 24 h'], ['7d', '7 days'], ['all', 'All']];
+const AF_WHO = [['any', 'Anyone'], ['Sergio', 'Sergio'], ['Ana Rita', 'Ana Rita']];
+const AF_ORDER = [['new', 'Newest first'], ['old', 'Oldest first']];
+const afActive = f => { const d = afDefaults(); return f.types.length > 0 || f.when !== d.when || f.who !== d.who || f.order !== d.order; };
+function afFilter(list, f, now = Date.now()) {
+  const from = { today: L.startOfDay(now), '24h': now - L.DAY, '7d': L.startOfDay(now) - 6 * L.DAY, all: -Infinity }[f.when];
+  const typeOf = e => (e.type === 'pumpsession' ? 'pump' : e.type);
+  const out = list.filter(e => e.start >= from && (!f.types.length || f.types.includes(typeOf(e))) && (f.who === 'any' || e.by === f.who));
+  return out.sort((a, b) => (f.order === 'old' ? a.start - b.start : b.start - a.start));
+}
+function recordRows(list) {
+  let rows = '', lastDay = null;
+  for (const e of list) {
+    const d = dayLabel(e.start);
+    if (d !== lastDay) { rows += `<div class="day">${d}</div>`; lastDay = d; }
+    const { ic, what } = describe(e);
+    rows += `<button class="row" data-edit="${e.id}"><span class="ic">${ic}</span><span class="main">
+      <div class="what">${esc(what)}${whoTag(e.by)}${S.pending.has(e.id) ? ' <span class="waiting-mark">⏳</span>' : ''}</div>
+      ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}</span><span class="time">${clock(e.start)}</span></button>`;
+  }
+  return rows;
+}
+function renderActivity(app) {
+  const f = S.af ||= afDefaults();
+  const everything = all(), list = afFilter(everything, f), on = afActive(f);
+  const chips = (opts, attr, isOn) => `<div class="timeline-chips">${opts.map(([v, l]) => `<button class="chip ${isOn(v) ? 'on' : ''}" data-${attr}="${v}">${l}</button>`).join('')}</div>`;
+  const panel = f.open ? `<div class="filters">
+      <div class="flabel">Type <small>· pick one or more</small></div>
+      <div class="timeline-chips"><button class="chip ${f.types.length ? '' : 'on'}" data-fall="">All</button>${AF_TYPES.map(([v, l]) => `<button class="chip ${f.types.includes(v) ? 'on' : ''}" data-ftype="${v}">${l}</button>`).join('')}</div>
+      <div class="flabel">When</div>${chips(AF_WHEN, 'fwhen', v => f.when === v)}
+      <div class="flabel">Logged by</div>${chips(AF_WHO, 'fwho', v => f.who === v)}
+      <div class="flabel">Order</div>${chips(AF_ORDER, 'forder', v => f.order === v)}
+    </div>` : '';
+  let body = recordRows(list);
+  if (!list.length) body = `<div class="empty">${everything.length ? 'Nothing matches these filters.' : 'Nothing logged yet.'}</div>`;
+  app.innerHTML = `<div class="screen activity-screen" style="padding-bottom:40px">
+    <div class="topbar"><button class="iconbtn" data-nav="home" aria-label="Back">←</button><div class="grow"><h1>Activity</h1>
+      <div class="sub">${list.length} record${list.length === 1 ? '' : 's'} ${syncBadge()}</div></div>
+      ${on ? '<button class="fclear" data-act="fclear">Clear</button>' : ''}
+      <button class="filterbtn ${f.open ? 'open' : ''}" data-act="filters" aria-expanded="${f.open}">Filter${on ? '<span class="fdot"></span>' : ''}</button></div>
+    ${panel}
+    ${body}
+    ${f.when === 'all' ? '<button class="more" data-act="older">Show earlier days</button>' : ''}
+  </div>`;
 }
 
 // ---------- Milk stock ----------
@@ -892,6 +924,10 @@ swipe($('#toast'), {
 });
 // If a swipe on the toast is let go without dismissing it, give it a few more seconds.
 $('#toast').addEventListener('touchend', () => { if (!$('#toast').hidden) toastAutoHide(toastActions.length ? 5000 : 2500); });
+swipe($('#app'), {
+  axis: 'y', threshold: 90, done: () => { if (S.view === 'activity') history.back(); },
+  start: ev => S.view === 'activity' && !S.sheet && window.scrollY <= 0 && !!ev.target.closest('.activity-screen .topbar'),
+});
 swipe($('#sheet'), {
   axis: 'y', threshold: 90, done: () => closeSheet(),
   // From the handle or the title line, and only while the card is scrolled to the top.
@@ -907,6 +943,12 @@ document.addEventListener('click', ev => {
 
   if (ds.toast != null) { hideToast(); return toastActions[+ds.toast]?.fn(); }
   if (ds.setup) return finishSetup(ds.setup);
+  if (ds.nav === 'activity') S.af = afDefaults(); // filters start fresh every time
+  if (ds.ftype) { const t = S.af.types; S.af.types = t.includes(ds.ftype) ? t.filter(x => x !== ds.ftype) : [...t, ds.ftype]; return render(); }
+  if (ds.fall != null) { S.af.types = []; return render(); }
+  if (ds.fwhen) { S.af.when = ds.fwhen; return render(); }
+  if (ds.fwho) { S.af.who = ds.fwho; return render(); }
+  if (ds.forder) { S.af.order = ds.forder; return render(); }
   if (ds.nav) { if (ds.nav !== 'home') history.pushState({ view: ds.nav }, ''); else if (S.view !== 'home') return history.back(); S.view = ds.nav; window.scrollTo(0, 0); return render(); }
   if (ds.edit) {
     const e = list.find(x => x.id === ds.edit);
@@ -1036,7 +1078,8 @@ document.addEventListener('click', ev => {
     case 'copy': return navigator.clipboard?.writeText(inviteLink()).then(() => toast('Link copied', []));
     case 'csv': return exportCsv();
     case 'older': return loadOlder();
-    case 'activity': S.activityOpen = !S.activityOpen; return render();
+    case 'filters': S.af.open = !S.af.open; return render();
+    case 'fclear': S.af = { ...afDefaults(), open: S.af.open }; return render();
   }
 });
 

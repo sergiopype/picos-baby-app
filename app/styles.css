@@ -82,17 +82,18 @@ button { cursor: pointer; border: 0; background: none; }
 .today-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 14px; margin-top: 6px; }
 .today-grid b { font-variant-numeric: tabular-nums; }
 
-/* ---------- Activity (fold-out list) ---------- */
-.activity { margin-top: 14px; }
-.activity-head {
-  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-  background: var(--card); border-radius: 14px; padding: 14px; min-height: 56px;
-}
-.activity-head .title { font-weight: 800; font-size: 17px; }
-.activity-head .count { color: var(--muted); font-size: 15px; }
-.activity-head .chev { transition: transform .15s ease; }
-.activity.open .activity-head .chev { transform: rotate(90deg); }
-.activity.open .day:first-of-type { margin-top: 14px; }
+/* ---------- Activity screen ---------- */
+.activity-screen .topbar { touch-action: none; } /* swipe down here to go back */
+.filterbtn, .fclear { min-height: 44px; padding: 0 14px; border-radius: 12px; font-weight: 700; background: var(--card); position: relative; }
+.filterbtn.open { outline: 2px solid var(--text); outline-offset: -2px; }
+.fclear { background: none; color: var(--muted); padding: 0 6px; }
+.fdot { position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--feed); }
+.filters { background: var(--card); border-radius: 16px; padding: 4px 12px 12px; margin-bottom: 6px; }
+.filters .timeline-chips { flex-wrap: wrap; margin-bottom: 0; padding-bottom: 0; }
+.flabel { margin: 12px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.flabel small { text-transform: none; letter-spacing: 0; }
+.filters .chip { background: var(--card-2); }
+.filters .chip.on { background: var(--bg); }
 
 /* ---------- Timeline ---------- */
 .day { margin: 22px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
