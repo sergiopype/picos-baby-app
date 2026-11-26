@@ -1098,4 +1098,10 @@ if (join && join !== S.fid) {
 if (S.fid && S.me) start();
 render();
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+  // When a new version has just been installed, reload once so it shows straight away
+  // (not only on the next open). Skipped while a card is open, so nothing typed is lost.
+  const hadOld = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadOld && !S.sheet) location.reload(); });
+}
