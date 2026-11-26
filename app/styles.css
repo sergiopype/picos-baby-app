@@ -131,7 +131,6 @@ html.home-fixed .screen { padding-bottom: 0; }
   border-radius: 14px; background: var(--card); font-size: 15px; text-align: left; box-shadow: 0 2px 8px rgb(0 0 0 / .08);
 }
 .stockline .emoji { font-size: 18px; }
-.stockline > span:nth-child(2) { flex: 1; }
 .chev { color: var(--muted); font-size: 20px; margin-left: auto; }
 .flag { font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 8px; color: #fff; white-space: nowrap; }
 .flag.soon { background: var(--warn); }
@@ -352,7 +351,11 @@ body.toast-on #sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom));
 .bottle-running .clock.stopped { color: var(--muted); }
 
 /* ---------- Milk stock: title, bag card, defrost states ---------- */
-.stockline > span:nth-child(2) { display: flex; flex-direction: column; line-height: 1.25; }
+.stockline .sl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.stockline .sl-row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; margin-top: 2px; white-space: nowrap; overflow: hidden; }
+.stockline .sl-col { display: flex; flex-direction: column; min-width: 0; }
+.stockline .sl-col small { font-size: 13px; color: var(--muted); }
+.stockline .sl-col b { font-size: 17px; }
 .sl-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 :root { --defrost: #e3f1fc; --defrost-line: #8cc4ee; --defrosting: #e6e4e8; }
 [data-theme="dark"] { --defrost: #1d3446; --defrost-line: #4f8fc0; --defrosting: #34303a; }

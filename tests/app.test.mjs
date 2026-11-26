@@ -226,6 +226,10 @@ check(ca !== cb && [ca, cb].sort().join() === 'L-002-B,L-003-B', `Two phones sav
 await A.click('[data-act="close"]'); await B.click('[data-act="close"]');
 let line = await waitStock(A, 'Fridge 160 ml');
 check(line.includes('Room 60 ml') && line.includes('Fridge 160 ml') && line.includes('Freezer 20 ml'), `Stock line totals room, fridge and freezer (${line})`);
+{ const m = await A.evaluate(() => { const r = document.querySelector('.stockline .sl-row'), t = document.querySelector('.stockline .sl-title');
+    return { h: r.getBoundingClientRect().height, over: r.scrollWidth > r.clientWidth + 1, title: t.getBoundingClientRect().bottom <= r.getBoundingClientRect().top + 1 }; });
+  check(m.h < 48 && !m.over && m.title, `Stock line: title on top, amounts side by side, nothing cut off (${JSON.stringify(m)})`); }
+await A.screenshot({ path: shots + '/15-home-stock.png' });
 // Closing the card without saving keeps the session
 await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="pump"]'); await A.click('[data-act="close"]');
 check(await A.isVisible('.act.pump:has-text("Finish pump")'), 'Closing the card unsaved leaves "Finish pump"');
