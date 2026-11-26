@@ -81,6 +81,13 @@ await drag(A, '#sheet .choices', 0, 200); await sleep(300);
 check(await A.isVisible('#sheet'), 'Card: dragging down in the middle does not close it');
 await drag(A, '#sheet .grab', 0, 25); await sleep(300);
 check(await A.isVisible('#sheet'), 'Card: a short pull on the handle springs back');
+await drag(A, '#sheet .sheet-title h2', 0, 200); await sleep(300);
+check(await A.isVisible('#sheet'), 'Card: dragging down on the title does not close it (top strip only)');
+await A.mouse.click(190, 20); await sleep(300);
+check(await A.isVisible('#sheet'), 'Card: tapping the dimmed area does not close it');
+await drag(A, '#sheet-backdrop', 0, 200); await sleep(400);
+check(!(await A.isVisible('#sheet')), 'Card: swiping down on the dimmed area above closes it');
+await A.click('[data-act="feed"]');
 await drag(A, '#sheet .grab', 0, 200); await sleep(400);
 check(!(await A.isVisible('#sheet')), 'Card: swiping down from the handle closes it');
 check(await has(A, 'Last feed'), 'Card swipe-close returns to home');
@@ -88,6 +95,7 @@ check(await has(A, 'Last feed'), 'Card swipe-close returns to home');
 // Sleep: one tap starts the timer and opens the card; details save live; stop inside the card
 await A.click('[data-act="sleep"]');
 check(await A.isVisible('[data-act="stopsleep"]'), 'Sleep tap starts the timer and opens the card with Woke up · stop');
+check(await A.isVisible('text=Baby woke up · stop'), 'Stop button reads "Baby woke up · stop"');
 check(await A.locator('[data-act="startsleep"]').count() === 0, 'No separate Start step in the card');
 check(await has(B, 'Woke up'), 'B: sees baby asleep right after the tap');
 check(await A.inputValue('#sl-temp') === '23', 'Room temperature starts at 23 °C');
@@ -135,6 +143,18 @@ check(await B.locator('.row:has-text("Bottle · 80 ml")').waitFor({ state: 'deta
 await A.click('#toast [data-toast="0"]');
 check(await has(B, 'Bottle · 80 ml'), 'B: undo brings it back');
 await toHome(A); await toHome(B);
+
+// Home is one fixed screen: no scrolling, milk stock line right under the tiles, on both phone sizes
+for (const [w, hgt] of [[384, 832], [412, 915]]) {
+  await A.setViewportSize({ width: w, height: hgt }); await sleep(200);
+  const m = await A.evaluate(() => { const r = s => document.querySelector(s).getBoundingClientRect();
+    window.scrollTo(0, 500); return { y: window.scrollY, tiles: r('.now').bottom, stock: r('.stockline'), bar: r('.bar-inner').top, h: innerHeight }; });
+  check(m.y === 0 && m.stock.top > m.tiles && m.stock.top - m.tiles < 20 && m.stock.bottom < m.bar && m.bar < m.h, `Home ${w}x${hgt}: no scroll, stock line under the tiles and above the buttons`);
+}
+await A.setViewportSize({ width: 384, height: 832 });
+await A.click('[data-act="diaper"]');
+check(await A.evaluate(() => document.querySelector('[data-diaper="wet"]').getBoundingClientRect().top > document.querySelector('.notebtn').getBoundingClientRect().bottom), 'Diaper card: Wet/Dirty/Both sit below + Add a note');
+await A.click('[data-act="close"]');
 
 // Pump and milk stock
 const stockText = async p => (await p.textContent('.stockline')).replace(/\s+/g, ' ').trim();

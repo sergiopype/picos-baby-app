@@ -236,6 +236,8 @@ function readTemp() {
 // ---------- Rendering ----------
 function render() {
   const app = $('#app');
+  // The home screen fits on one screen and doesn't scroll; other screens scroll as usual.
+  document.documentElement.classList.toggle('home-fixed', !!(S.fid && S.me) && S.view === 'home');
   if (!S.fid || !S.me) return renderSetup(app);
   if (S.view === 'contacts') return renderContacts(app);
   if (S.view === 'stock') return renderStock(app);
@@ -309,8 +311,9 @@ function renderHome(app) {
       <button class="iconbtn" data-nav="contacts" aria-label="Contacts">📞</button>
       <button class="iconbtn" data-nav="settings" aria-label="Settings">⚙️</button></div>
     <div class="now">${feedTile}${diaperTile}${sleepTile}${todayTile}</div>
+    ${stockLine}
   </div>
-  <div class="bar"><div class="bar-wrap">${stockLine}<div class="bar-inner">${feedBtn}
+  <div class="bar"><div class="bar-wrap"><div class="bar-inner">${feedBtn}
     ${pumpBtn}
     ${sleepBtn}
     <button class="act diaper" data-act="diaper"><span class="emoji">🧷</span>Diaper<span class="hint" ${diaper ? `data-ago="${diaper.start}"` : ''}>${diaper ? agoLong(diaper.start) : ''}</span></button>
@@ -394,18 +397,18 @@ function drawSheet() {
   } else if (sh.kind === 'diaper') {
     body = `<div class="sheet-title"><h2>Diaper</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
       ${timeChips()}
-      <div class="choices three" style="--c:var(--diaper)">
+      <div class="section-label">Colour (optional, pick before tapping)</div>
+      <div class="timeline-chips">${Object.entries(COLORS).map(([n, c]) => `<button class="chip ${sh.color === n ? 'on' : ''}" data-color="${n}"><span class="swatch" style="background:${c}"></span>${n}</button>`).join('')}</div>
+      ${noteBlock()}
+      <div class="choices three diaper-go" style="--c:var(--diaper)">
         <button class="big-choice primary" data-diaper="wet"><span class="emoji">💧</span>Wet</button>
         <button class="big-choice primary" data-diaper="dirty"><span class="emoji">💩</span>Dirty</button>
         <button class="big-choice primary" data-diaper="both"><span class="emoji">💧💩</span>Both</button>
-      </div>
-      <div class="section-label">Colour (optional, pick before tapping)</div>
-      <div class="timeline-chips">${Object.entries(COLORS).map(([n, c]) => `<button class="chip ${sh.color === n ? 'on' : ''}" data-color="${n}"><span class="swatch" style="background:${c}"></span>${n}</button>`).join('')}</div>
-      ${noteBlock()}`;
+      </div>`;
   } else if (sh.kind === 'sleep') {
     const st = sh.sleepStart, back = [[5, '5 min'], [15, '15 min'], [30, '30 min']];
     body = `<div class="sheet-title"><h2>Sleep</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
-      <button class="sleep-go running" data-act="stopsleep"><span class="emoji">🌤️</span>Woke up · stop<small>asleep since ${clock(st)} · ${dur(Date.now() - st)}</small></button>
+      <button class="sleep-go running" data-act="stopsleep"><span class="emoji">🌤️</span>Baby woke up · stop<small>asleep since ${clock(st)} · ${dur(Date.now() - st)}</small></button>
       <div class="section-label">Fell asleep earlier?</div>
       <div class="timeline-chips">${back.map(([m, l]) => `<button class="chip" data-sback="${m}">${l} earlier</button>`).join('')}</div>
       ${sleepDetails(sh.d)}
@@ -413,7 +416,7 @@ function drawSheet() {
       ${noteBlock()}`;
   } else if (sh.kind === 'edit') body = editBody();
   else if (sh.kind === 'contact') body = contactBody();
-  el.innerHTML = `<div class="grab" aria-hidden="true"></div>${body}`;
+  el.innerHTML = `<div class="grabzone" aria-hidden="true"><div class="grab"></div></div>${body}`;
 }
 
 // ---------- Bottle from stock ----------
@@ -883,13 +886,14 @@ function hideToast() {
 // ---------- Swipe gestures ----------
 // Swipe the toast left or right to dismiss it. Swipe a card down from its top (the grey handle
 // or the title line) to close it, same as the X. A short movement still counts as a normal tap.
-function swipe(el, { start, axis, done, threshold }) {
+function swipe(el, { start, axis, done, threshold, move }) {
   let s = null;
-  el.addEventListener('touchstart', ev => {
+  const src = el; el = move || el; // touches are read on src, the movement is shown on el
+  src.addEventListener('touchstart', ev => {
     if (ev.touches.length !== 1 || !start(ev)) return;
     s = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), d: 0, on: false };
   }, { passive: true });
-  el.addEventListener('touchmove', ev => {
+  src.addEventListener('touchmove', ev => {
     if (!s) return;
     const dx = ev.touches[0].clientX - s.x, dy = ev.touches[0].clientY - s.y;
     if (!s.on) {
@@ -915,8 +919,8 @@ function swipe(el, { start, axis, done, threshold }) {
       setTimeout(() => { done(); el.style.transform = ''; el.style.opacity = ''; }, 180);
     } else { el.style.transform = ''; el.style.opacity = ''; }
   };
-  el.addEventListener('touchend', end);
-  el.addEventListener('touchcancel', () => { if (s) { s = null; el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; } });
+  src.addEventListener('touchend', end);
+  src.addEventListener('touchcancel', () => { if (s) { s = null; el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; } });
 }
 swipe($('#toast'), {
   axis: 'x', threshold: 80, done: hideToast,
@@ -930,9 +934,10 @@ swipe($('#app'), {
 });
 swipe($('#sheet'), {
   axis: 'y', threshold: 90, done: () => closeSheet(),
-  // From the handle or the title line, and only while the card is scrolled to the top.
-  start: ev => $('#sheet').scrollTop <= 0 && !!ev.target.closest('.grab, .sheet-title') && !ev.target.closest('input, textarea, select'),
+  // Only from the top strip with the handle. Inside the card a swipe just scrolls.
+  start: ev => !!ev.target.closest('.grabzone'),
 });
+swipe($('#sheet-backdrop'), { axis: 'y', threshold: 90, done: () => closeSheet(), move: $('#sheet'), start: () => !!S.sheet });
 
 // ---------- Taps ----------
 document.addEventListener('click', ev => {
@@ -1084,7 +1089,7 @@ document.addEventListener('click', ev => {
 });
 
 
-$('#sheet-backdrop').addEventListener('click', () => closeSheet());
+// Tapping the dimmed area does nothing, so a mistap can't lose an entry. Swipe down there (or on the handle) to close.
 
 document.addEventListener('input', ev => {
   if (!S.sheet || S.sheet.kind !== 'pump' || !ev.target.dataset.pin) return;
