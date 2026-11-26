@@ -349,3 +349,4 @@ body.toast-on #sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom));
 .bottle-running .label { font-weight: 700; font-size: 18px; }
 .bottle-running .clock { font-size: 52px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 4px 0; }
 .bottle-running .fine { margin: 0; }
+.bottle-running .clock.stopped { color: var(--muted); }

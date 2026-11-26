@@ -83,14 +83,19 @@ check(await A.locator('.milkrow').count() === 0, 'Other hides the stock list');
 await A.click('[data-step="target:10"]'); await A.click('[data-step="target:10"]');
 check(await A.evaluate(() => document.querySelector('.notebtn').getBoundingClientRect().bottom < document.querySelector('[data-act="startbottle"]').getBoundingClientRect().top), '+ Add a note sits above Start bottle feeding');
 await A.click('[data-act="startbottle"]');
-check(await A.isVisible('.act.feed.running:has-text("Stop bottle")'), 'Home: Feed button turns into Stop bottle with a timer');
+check(await A.locator('.act.feed.running:has-text("Stop bottle")').waitFor({ timeout: 8000 }).then(() => true, e => (console.log(e.message.slice(0, 300)), false)), 'Home: Feed button turns into Stop bottle with a timer');
 check(await has(B, 'Bottle feeding'), 'B: sees the bottle feeding live');
 await A.click('[data-act="feed"]');
 check(await A.isVisible('[data-act="stopbottle"]:has-text("Stop bottle feeding")') && await A.isVisible('.bottle-running:has-text("80 ml prepared")'), 'Card shows the running bottle, 80 ml prepared, and Stop bottle feeding');
 await A.click('[data-act="stopbottle"]');
 check(await A.isVisible('#leftover') && await A.isVisible('[data-act="stopback"]') && await A.isVisible('[data-act="savebottle"]'), 'Stop asks for left over ml with Save and Back');
+{ const c1 = await A.textContent('.bottle-running .clock'); await sleep(2200); const c2 = await A.textContent('.bottle-running .clock');
+  check(c1 === c2 && await A.isVisible('.bottle-running:has-text("Stopped at")'), `Stop freezes the timer (${c1} → ${c2})`);
+  check(await has(B, 'Bottle stopped'), 'B: home shows the bottle as stopped'); }
 await A.click('[data-act="stopback"]');
 check(await A.isVisible('[data-act="stopbottle"]'), 'Back returns to the running bottle');
+{ const c1 = await A.textContent('.bottle-running .clock'); await sleep(2200); const c2 = await A.textContent('.bottle-running .clock');
+  check(c1 !== c2, `After Back the timer runs again (${c1} → ${c2})`); }
 await A.click('[data-act="stopbottle"]'); await A.click('[data-act="savebottle"]');
 check(await hasRow(A, 'Bottle · 80 ml'), 'A: bottle 80 ml saved (default 60 + 20)');
 check(await A.isVisible('.act.feed:not(.running)'), 'Feed button back to normal');
