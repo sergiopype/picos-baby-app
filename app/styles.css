@@ -323,3 +323,29 @@ body.toast-on #sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom));
 .bag .seg { display: flex; gap: 6px; }
 .bag .seg .chip { flex: 1; white-space: nowrap; padding-left: 6px; padding-right: 6px; justify-content: center; }
 .label-card .code { white-space: nowrap; font-size: 26px; }
+
+/* ---------- Feed card: bottle ---------- */
+/* Full-width Bottle button under Left / Right, same height and style. */
+.bottle-btn {
+  width: 100%; min-height: 72px; margin-top: 10px; border-radius: 20px; background: var(--card); border: 3px solid transparent;
+  display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 20px; font-weight: 700;
+}
+.bottle-btn .emoji { font-size: 26px; }
+.bottle-btn small { font-size: 13px; font-weight: 600; color: var(--muted); }
+.bottle-btn.on { border-color: var(--feed); background: color-mix(in srgb, var(--feed) 20%, var(--card)); }
+.bottle-btn:active { transform: scale(.98); }
+/* A bag in the bottle list; a picked bag shows − ml + under it. */
+.milkpick { margin-bottom: 6px; }
+.milkpick .milkrow { margin-bottom: 0; }
+.milkpick.on { background: color-mix(in srgb, var(--feed) 12%, var(--card)); border-radius: 14px; padding-bottom: 8px; }
+.milkpick.expired .milkrow { opacity: .45; }
+.milkrow:disabled { cursor: not-allowed; }
+.take-in { display: flex; justify-content: flex-end; gap: 10px; padding: 6px 12px 0; }
+.take-in b { min-width: 70px; text-align: center; font-size: 18px; color: var(--feed); font-variant-numeric: tabular-nums; }
+.save.bottle-go { width: 100%; margin-top: 6px; height: 64px; border-radius: 18px; background: var(--feed); color: var(--on-accent); font-weight: 800; font-size: 19px; }
+.save.bottle-go.running { outline: 4px solid var(--text); outline-offset: -4px; }
+.fine.center { text-align: center; margin-top: 8px; }
+.bottle-running { text-align: center; background: var(--card); border-radius: 20px; padding: 14px 12px; }
+.bottle-running .label { font-weight: 700; font-size: 18px; }
+.bottle-running .clock { font-size: 52px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 4px 0; }
+.bottle-running .fine { margin: 0; }

@@ -6,7 +6,7 @@
 //   syncedAt it copied (families/<id>/meta/notion) and only asks for newer changes.
 // - When it creates a Notion page it writes the page ID back onto the entry, so later edits
 //   update that same page and deletes move it to Notion's trash. Running it twice is harmless.
-// - Feeds and sleeps that are still running are skipped; they're copied once stopped.
+// - Feeds (breast or bottle) and sleeps that are still running are skipped; they're copied once stopped.
 
 const env = k => { const v = process.env[k]; if (!v) throw new Error(`Missing setting ${k}`); return v; };
 const PROJECT = env('FIREBASE_PROJECT_ID');
@@ -94,7 +94,8 @@ const SLEEP = {
 const SIDE = { left: 'Left', right: 'Right' };
 const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
 const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
-const SOURCE = { breast: 'Breast milk', formula: 'Formula' };
+const SOURCE = { breast: 'Breast milk', other: 'Other', formula: 'Other' }; // "Formula" was renamed "Other" in Nov 2026
+const WINDOW = { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' };
 
 // Same rules as the app (app/js/logic.js): room 4 h, fridge 4 days, freezer 6 months, thawed 24 h.
 function milkExpiry(p) {
@@ -116,11 +117,14 @@ function entryToNotion(e) {
   }
   if (e.type === 'feed') {
     const breast = e.kind === 'left' || e.kind === 'right';
+    const timedBottle = e.kind === 'bottle' && e.preparedMl != null; // bottles with a timer (Nov 2026 on)
     const type = { left: 'Breast L', right: 'Breast R', bottle: 'Bottle', pump: 'Pump' }[e.kind];
     const name = breast ? `${e.kind === 'left' ? 'Left' : 'Right'} breast · ${fmtDur(mins(e))}` : `${e.kind === 'bottle' ? 'Bottle' : 'Pumped'} · ${e.ml || 0} ml`;
     return { ds: DS.feed, props: { Entry: title(name), Time: date(e.start), Type: sel(type),
-      'Duration (min)': num(breast ? mins(e) : null), 'Amount (ml)': num(breast ? null : e.ml), 'Logged by': who(e.by), Notes: txt(e.note),
-      ...(e.kind === 'bottle' && { Source: sel(SOURCE[e.source]), 'Milk used': txt((e.uses || []).map(u => `${u.code} (${u.ml} ml)`).join(', ')) }) } };
+      'Duration (min)': num(breast || timedBottle ? mins(e) : null), 'Amount (ml)': num(breast ? null : e.ml), 'Logged by': who(e.by), Notes: txt(e.note),
+      ...(e.kind === 'bottle' && { Source: sel(SOURCE[e.source]), 'Milk used': txt((e.uses || []).map(u => `${u.code} (${u.ml} ml)`).join(', ')) }),
+      ...(timedBottle && { 'Target (ml)': num(e.targetMl), 'Prepared (ml)': num(e.preparedMl), 'Left over (ml)': num(e.leftoverMl ?? 0),
+        'Time of day': sel(WINDOW[e.window]), End: date(e.end) }) } };
   }
   if (e.type === 'diaper') {
     const kind = { wet: 'Wet', dirty: 'Dirty', both: 'Both' }[e.kind];
@@ -174,7 +178,7 @@ async function syncCollection(collectionId, toNotion, isReady, state) {
 }
 
 const state = await fs('GET', '/meta/notion').then(fromDoc).catch(() => ({}));
-const hasTimer = e => e.type === 'sleep' || (e.type === 'feed' && (e.kind === 'left' || e.kind === 'right'));
+const hasTimer = e => e.type === 'sleep' || (e.type === 'feed' && (e.kind === 'left' || e.kind === 'right' || e.kind === 'bottle'));
 // Pump sessions are only the timer; the Left/Right pump records made from them are what gets copied.
 const entryReady = e => e.type !== 'pumpsession' && typeof e.start === 'number' && (!hasTimer(e) || e.end != null);
 await syncCollection('entries', entryToNotion, entryReady, state);
