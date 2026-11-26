@@ -281,8 +281,8 @@ function renderHome(app) {
   let feedTile;
   if (feedRun) feedTile = `<button class="tile feed running" data-edit="${feedRun.id}"><div class="label">Feeding now</div>
       <div class="big" data-timer="${feedRun.start}">${clockTimer(now - feedRun.start)}</div><div class="small">${side(feedRun.kind)} breast</div></button>`;
-  else if (bottleRun) feedTile = `<button class="tile feed running" data-act="feed"><div class="label">Bottle feeding</div>
-      <div class="big" data-timer="${bottleRun.start}">${clockTimer(now - bottleRun.start)}</div><div class="small">${bottleRun.preparedMl ?? bottleRun.ml ?? 0} ml prepared</div></button>`;
+  else if (bottleRun) feedTile = `<button class="tile feed running" data-act="feed"><div class="label">${bottleRun.stoppedAt ? 'Bottle stopped' : 'Bottle feeding'}</div>
+      <div class="big">${bottleClock(bottleRun)}</div><div class="small">${bottleRun.stoppedAt ? 'tap to enter left over' : `${bottleRun.preparedMl ?? bottleRun.ml ?? 0} ml prepared`}</div></button>`;
   else if (sess) {
     const sides = sess.parts.map(p => L.isBreast(p) ? side(p.kind) : p.kind === 'bottle' ? `${p.ml} ml` : '').filter(Boolean).join(' + ');
     feedTile = `<div class="tile feed"><div class="label">Last feed</div><div class="big" data-ago="${sess.start}">${ago(sess.start)}</div>
@@ -309,7 +309,7 @@ function renderHome(app) {
     : `<button class="act sleep" data-act="sleep"><span class="emoji">😴</span>Sleep<span class="hint">${sl ? `awake ${ago(sl.since)}` : 'start'}</span></button>`;
   const feedBtn = feedRun
     ? `<button class="act feed running" data-act="stopfeed"><span class="emoji">⏹️</span>Stop feed<span class="hint" data-timer="${feedRun.start}">${side(feedRun.kind)} ${clockTimer(now - feedRun.start)}</span></button>`
-    : bottleRun ? `<button class="act feed running" data-act="feed"><span class="emoji">🍼</span>Stop bottle<span class="hint" data-timer="${bottleRun.start}">${clockTimer(now - bottleRun.start)}</span></button>`
+    : bottleRun ? `<button class="act feed running" data-act="feed"><span class="emoji">🍼</span>${bottleRun.stoppedAt ? 'Finish bottle' : 'Stop bottle'}<span class="hint">${bottleClock(bottleRun)}</span></button>`
     : `<button class="act feed" data-act="feed"><span class="emoji">🍼</span>Feed<span class="hint">next: ${side(next)}</span></button>`;
 
   const st = L.stockTotals(S.milk, now);
@@ -496,15 +496,21 @@ function startBottleButton() {
   return `<button class="save bottle-go" data-act="startbottle" ${ok ? '' : 'disabled'}>▶ Start bottle feeding</button>
     ${ok ? '' : `<p class="fine center">${sh.source === 'other' ? 'Set an amount first.' : `Pick ${short} ml more from the bags to start.`}</p>`}`;
 }
+// Pressing Stop freezes the timer: the moment is saved on the bottle as stoppedAt (so the other phone
+// and the home screen freeze too) and becomes the end time on Save. Back clears it and the timer carries on.
+const bottleClock = e => e.stoppedAt
+  ? `<span>${clockTimer(e.stoppedAt - e.start)}</span>`
+  : `<span data-timer="${e.start}">${clockTimer(Date.now() - e.start)}</span>`;
 function runningBottleBody(e) {
   const sh = S.sheet;
   sh.runningId = e.id;
   if (sh.showNote == null || sh.noteFor !== e.id) { sh.noteFor = e.id; sh.note = e.note || ''; sh.showNote = !!e.note; }
+  if (sh.stopping == null) sh.stopping = !!e.stoppedAt; // reopened while stopped: straight to the leftover step
   const prepared = e.preparedMl ?? e.ml ?? 0;
   const from = isOther(e) ? 'Other' : (e.uses || []).map(u => `${u.ml} ml from ${esc(u.code)}`).join(' + ') || 'Breast milk';
   const info = `<div class="bottle-running"><div class="label">🍼 Bottle feeding</div>
-      <div class="clock" data-timer="${e.start}">${clockTimer(Date.now() - e.start)}</div>
-      <div class="fine">${prepared} ml prepared · ${from}<br>started ${clock(e.start)} · target ${e.targetMl ?? prepared} ml</div></div>`;
+      <div class="clock ${e.stoppedAt ? 'stopped' : ''}">${bottleClock(e)}</div>
+      <div class="fine">${e.stoppedAt ? `Stopped at ${clock(e.stoppedAt)} · ` : ''}${prepared} ml prepared · ${from}<br>started ${clock(e.start)} · target ${e.targetMl ?? prepared} ml</div></div>`;
   if (!sh.stopping) return `${info}${noteBlock()}
     <button class="save bottle-go running" data-act="stopbottle">⏹ Stop bottle feeding</button>`;
   sh.leftover ??= 0;
@@ -541,13 +547,13 @@ function saveBottle() {
   if (!e) return closeSheet();
   const prepared = e.preparedMl ?? e.ml ?? 0;
   const { ml, leftoverMl } = L.bottleResult(prepared, readLeftover());
-  const end = Math.max(Date.now(), e.start), note = readNote();
+  const end = Math.max(e.stoppedAt ?? Date.now(), e.start), note = readNote();
   db.saveEntry(e.id, { end, ml, leftoverMl, note });
   sh.runningId = null;
   closeSheet();
   buzz();
   toast(`Bottle · ate ${ml} ml${leftoverMl ? `, ${leftoverMl} thrown away` : ''} · ${dur(end - e.start)}`, [
-    { label: 'Undo', fn: () => db.saveEntry(e.id, { end: null, ml: prepared, leftoverMl: null }) },
+    { label: 'Undo', fn: () => db.saveEntry(e.id, { end: null, ml: prepared, leftoverMl: null }) }, // stays stopped, leftover step again
     { label: 'Edit', fn: () => openEdit(e.id) },
   ]);
 }
@@ -1168,8 +1174,16 @@ document.addEventListener('click', ev => {
     case 'feed': return openSheet('feed', { source: 'breast', picks: [], bottleOpen: false, showNote: null });
     case 'bottle': keepFeedInputs(); S.sheet.bottleOpen = !S.sheet.bottleOpen; return drawSheet();
     case 'startbottle': return startBottle();
-    case 'stopbottle': keepFeedInputs(); S.sheet.stopping = true; S.sheet.leftover = 0; return drawSheet();
-    case 'stopback': keepFeedInputs(); S.sheet.stopping = false; return drawSheet();
+    case 'stopbottle': {
+      keepFeedInputs(); const at = Date.now(), id = S.sheet.runningId;
+      S.entries = S.entries.map(e => (e.id === id ? { ...e, stoppedAt: at } : e)); // freeze on screen at once
+      db.saveEntry(id, { stoppedAt: at }); S.sheet.stopping = true; S.sheet.leftover = 0; buzz(); return drawSheet();
+    }
+    case 'stopback': {
+      keepFeedInputs(); const id = S.sheet.runningId;
+      S.entries = S.entries.map(e => (e.id === id ? { ...e, stoppedAt: null } : e));
+      db.saveEntry(id, { stoppedAt: null }); S.sheet.stopping = false; return drawSheet();
+    }
     case 'savebottle': return saveBottle();
     case 'pump': return pumpTap();
     case 'savepump': return savePump();
