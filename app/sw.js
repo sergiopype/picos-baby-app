@@ -1,7 +1,7 @@
 // Offline support: the app's own files are kept on the phone so it opens with no signal.
 // Strategy: show the saved copy instantly, fetch a fresh copy in the background for next time.
 // That's how updates arrive by themselves. Bump VERSION when files are added or removed.
-const VERSION = 'picos-v12';
+const VERSION = 'picos-v13';
 const FILES = ['./', 'index.html', 'styles.css', 'config.js', 'js/app.js', 'js/db.js', 'js/logic.js',
   'vendor/firebase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
