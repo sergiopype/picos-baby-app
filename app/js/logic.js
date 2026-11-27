@@ -149,7 +149,7 @@ export const isDefrosting = (p, now = Date.now()) => p.place === 'thawed' && now
 export const PLACE_LETTER = { room: 'A', fridge: 'B', freezer: 'C' };
 
 export function pumpCode(side, seq) {
-  return `${side === 'left' ? 'L' : 'R'}-${String(seq).padStart(3, '0')}`;
+  return `${side === 'left' ? 'L' : side === 'both' ? 'LR' : 'R'}-${String(seq).padStart(3, '0')}`;
 }
 export const portionCode = (code, place) => (place === 'freezer' ? `${code}-F` : code); // old style, kept for reference
 
@@ -172,6 +172,12 @@ export function sideProblem(sd) {
   return null;
 }
 
+// Checks the combined bags (Left + Right together). Returns null when fine, else a short message.
+export function comboProblem(bags) {
+  if (bags.length > 1 && bags.some(b => !(b.ml > 0))) return 'Every bag needs some ml';
+  return null;
+}
+
 // The running or stopped-but-unsaved pump session, if any.
 export function openPumpSession(list) {
   return list.find(e => e.type === 'pumpsession') || null;
@@ -185,8 +191,12 @@ export function splitPortions(total, freezerMl) {
 
 // Highest sequence number seen for each side, from pump records we know about.
 export function maxSeq(list) {
-  const m = { left: 0, right: 0 };
-  for (const e of list) if (e.type === 'pump' && e.seq > (m[e.kind] ?? 0)) m[e.kind] = e.seq;
+  const m = { left: 0, right: 0, both: 0 };
+  for (const e of list) {
+    if (e.type !== 'pump') continue;
+    if (e.seq > (m[e.kind] ?? 0)) m[e.kind] = e.seq;
+    if (e.lrSeq > m.both) m.both = e.lrSeq; // combined Left + Right bags (LR-007)
+  }
   return m;
 }
 

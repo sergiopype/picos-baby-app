@@ -91,7 +91,7 @@ const SLEEP = {
   sound: { silence: 'Silence', white_noise: 'White noise', music: 'Music' },
 };
 
-const SIDE = { left: 'Left', right: 'Right' };
+const SIDE = { left: 'Left', right: 'Right', both: 'Both' }; // both = Left + Right combined in shared bags
 const PLACE = { room: 'Room temp', fridge: 'Fridge', freezer: 'Freezer', thawed: 'Thawed' };
 const CONTAINER = { bag: 'Bag', bottle: 'Bottle' };
 const SOURCE = { breast: 'Breast milk', other: 'Other', formula: 'Other' }; // "Formula" was renamed "Other" in Nov 2026
@@ -108,11 +108,13 @@ function milkExpiry(p) {
 function entryToNotion(e) {
   if (e.type === 'pump') {
     const bags = e.bags || [];
-    const sum = place => bags.length ? bags.filter(b => b.place === place).reduce((a, b) => a + (b.ml || 0), 0) : (place === 'fridge' ? e.fridgeMl : place === 'freezer' ? e.freezerMl : 0) || 0;
+    // Combined bags hold both sides' milk: each side's row counts its share, so the rows still add up.
+    const share = e.combined && e.combinedMl > 0 ? (e.ml || 0) / e.combinedMl : 1;
+    const sum = place => bags.length ? Math.round(share * bags.filter(b => b.place === place).reduce((a, b) => a + (b.ml || 0), 0)) : (place === 'fridge' ? e.fridgeMl : place === 'freezer' ? e.freezerMl : 0) || 0;
     return { ds: DS.pump, props: { Code: title(e.code || `${SIDE[e.kind]} · not stored`), Time: date(e.start), Side: sel(SIDE[e.kind]),
       'Duration (min)': num(e.end > e.start ? mins(e) : null),
       'Amount (ml)': num(e.ml), 'Room temp (ml)': num(sum('room')), 'Fridge (ml)': num(sum('fridge')), 'Freezer (ml)': num(sum('freezer')),
-      Bags: txt(bags.map(b => `${b.code} ${PLACE[b.place]} ${CONTAINER[b.container] || ''} ${b.ml} ml`.replace('  ', ' ')).join(', ')),
+      Bags: txt((e.combined ? `Combined Left + Right ${e.combinedMl} ml: ` : '') + bags.map(b => `${b.code} ${PLACE[b.place]} ${CONTAINER[b.container] || ''} ${b.ml} ml`.replace('  ', ' ')).join(', ')),
       'Logged by': who(e.by), Notes: txt(e.note) } };
   }
   if (e.type === 'feed') {

@@ -186,7 +186,36 @@ check(await B.isVisible('#sheet h2:has-text("Pump ·")'), 'Second tap stops it a
 check(await B.locator('[data-addbag]').count() === 0, 'Sides start at 0 ml (not pumped), no bags shown');
 // Left: 80 ml in three bags (two fridge, one freezer)
 await B.fill('[data-pin="left.ml"]', '80'); await B.press('[data-pin="left.ml"]', 'Tab');
-check(await B.isVisible('[data-pin="left.min"]') && await B.isVisible('[data-pcont="left:0:bag"].on'), 'Left with ml shows minutes and one bag (Bag preselected)');
+check(await B.isVisible('[data-pin="left.min"]') && await B.isVisible('[data-pstore="left"]') && await B.locator('[data-pplace]').count() === 0, 'Left with ml shows minutes and a closed Store separately button');
+// Save without choosing storage: popup, both sides' Store separately open, nothing saved
+await B.fill('[data-pin="right.ml"]', '20'); await B.press('[data-pin="right.ml"]', 'Tab');
+await B.click('[data-act="savepump"]');
+check(await B.isVisible('.confirm-box:has-text("Choose how to store the milk")') && await B.isVisible('[data-pcont="left:0:bag"].on') && await B.isVisible('[data-pcont="right:0:bag"].on'), 'Save with no storage chosen: popup and both Store separately open');
+await B.screenshot({ path: shots + '/8a-pump-popup.png' });
+await B.click('[data-cf="ok"]');
+check(await B.isVisible('[data-act="savepump"]'), 'Nothing saved, still on the Pump page');
+// Combine all closes Store separately; bags always add up to Left + Right
+await B.click('[data-act="combine"]');
+check(await B.locator('[data-pplace]').count() === 0 && await B.isVisible('[data-cml="0"]:has-text("100")'), 'Combine all closes Store separately, Quantity = 80 + 20 = 100 ml');
+await B.click('[data-caddbag]');
+await B.fill('[data-cin="1"]', '5'); await B.press('[data-cin="1"]', 'Tab');
+check(await B.inputValue('[data-cin="0"]') === '95' && await B.inputValue('[data-cin="1"]') === '5', 'Added bag takes its ml from the first bag (95 + 5)');
+await B.click('[data-cplace="1:freezer"]');
+await B.evaluate(() => { document.querySelector('[data-act="combine"]').scrollIntoView(); });
+await B.screenshot({ path: shots + '/8b-pump-combined.png' });
+check(await B.isVisible('.btn-row.end [data-act="close"]:has-text("Cancel")'), 'Cancel next to Save');
+await B.click('[data-act="savepump"]');
+{ await B.locator('.label-card .code').first().waitFor({ timeout: 8000 });
+  const c = await B.locator('.label-card .code').allTextContents();
+  check(c.join() === 'LR-001-B,LR-001-C', `Combined bags get LR codes (${c.join(' ')})`); }
+// Back: Pump page with everything as entered; Store separately instead; same records, no duplicate stock
+await B.click('[data-act="pumpback"]');
+check(await B.inputValue('[data-cin="1"]') === '5' && await B.inputValue('[data-pin="left.ml"]') === '80', 'Back reopens the Pump page with the entries kept');
+await B.click('[data-pstore="left"]');
+check(await B.locator('[data-cin]').count() === 0 && await B.isVisible('[data-pplace="left:0:fridge"]'), 'Store separately closes Combine all');
+await B.fill('[data-pin="right.ml"]', '0'); await B.press('[data-pin="right.ml"]', 'Tab');
+await B.fill('[data-pin="left.ml"]', '80'); await B.press('[data-pin="left.ml"]', 'Tab');
+check(await B.isVisible('[data-pcont="left:0:bag"].on'), 'Left storage open, Bag preselected');
 await B.click('[data-pplace="left:0:fridge"]');
 await B.click('[data-addbag="left"]');
 await B.fill('[data-pin="left.bags.0.ml"]', '40');
@@ -197,6 +226,7 @@ await B.click('[data-pplace="left:2:freezer"]');
 check(await B.inputValue('[data-pin="left.bags.2.ml"]') === '20' && await B.isVisible('#cnt-left:has-text("All ml in bags")'), 'New bag gets the ml left over (20)');
 // Right: 60 ml at room temperature in a bottle, stopped earlier (18 min)
 await B.fill('[data-pin="right.ml"]', '60'); await B.press('[data-pin="right.ml"]', 'Tab');
+await B.click('[data-pstore="right"]');
 await B.click('[data-pplace="right:0:room"]'); await B.click('[data-pcont="right:0:bottle"]');
 await B.fill('[data-pin="right.min"]', '18');
 await B.screenshot({ path: shots + '/8-pump-card.png', fullPage: false });
@@ -214,7 +244,7 @@ await toHome(A); check(await A.isVisible('.act.pump:not(.running)'), 'Pump butto
 // Both phones finish the same session at once: numbers must not clash
 await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="pump"]');
 await B.locator('.act.pump:has-text("Finish pump")').waitFor({ timeout: 8000 }); await B.click('[data-act="pump"]');
-for (const P of [A, B]) { await P.fill('[data-pin="left.ml"]', '50'); await P.press('[data-pin="left.ml"]', 'Tab'); await P.click('[data-pplace="left:0:fridge"]'); }
+for (const P of [A, B]) { await P.fill('[data-pin="left.ml"]', '50'); await P.press('[data-pin="left.ml"]', 'Tab'); await P.click('[data-pstore="left"]'); await P.click('[data-pplace="left:0:fridge"]'); }
 await Promise.all([A.click('[data-act="savepump"]'), B.click('[data-act="savepump"]')]);
 const ca = (await codesOf(A))[0], cb = (await codesOf(B))[0];
 check(ca !== cb && [ca, cb].sort().join() === 'L-002-B,L-003-B', `Two phones saving at once get different numbers (${ca}, ${cb})`);

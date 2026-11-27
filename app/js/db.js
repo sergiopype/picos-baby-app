@@ -68,7 +68,7 @@ export function adjustMilk(id, deltaMl) {
 // both phones log the same breast while one of them has no signal.
 export async function nextPumpSeq(side, known = 0) {
   const ref = doc(col('meta'), 'milk');
-  const field = side === 'left' ? 'L' : 'R';
+  const field = side === 'left' ? 'L' : side === 'both' ? 'LR' : 'R';
   const local = () => Math.max(known, lastCounter[field] || 0) + 1;
   if (!navigator.onLine) return { seq: local(), offline: true };
   const tx = runTransaction(db, async t => {
