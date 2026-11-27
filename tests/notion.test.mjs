@@ -9,7 +9,7 @@ const SCHEMA = { // property names and options from Sergio's Notion databases
   '420f1d38-5f63-8105-9508-000ba7459a77': { Entry: 0, Time: 0, Type: ['Breast L', 'Breast R', 'Bottle', 'Pump'], 'Duration (min)': 0, 'Amount (ml)': 0, 'Logged by': ['Sergio', 'Ana Rita'], Notes: 0,
     Source: ['Breast milk', 'Other', 'Formula'], 'Milk used': 0, 'Target (ml)': 0, 'Prepared (ml)': 0, 'Left over (ml)': 0, 'Time of day': ['Morning', 'Afternoon', 'Evening'], End: 0 },
   '422f1d38-5f63-8111-bcef-000b1d389622': { Code: 0, Time: 0, Side: ['Left', 'Right'], 'Duration (min)': 0, 'Amount (ml)': 0, 'Room temp (ml)': 0, 'Fridge (ml)': 0, 'Freezer (ml)': 0, Bags: 0, 'Logged by': ['Sergio', 'Ana Rita'], Notes: 0 },
-  '422f1d38-5f63-81a2-95af-000b2ddeb25b': { Code: 0, Side: ['Left', 'Right'], Place: ['Room temp', 'Fridge', 'Freezer', 'Thawed'], Container: ['Bag', 'Bottle'], Status: ['In stock', 'Used', 'Discarded'],
+  '422f1d38-5f63-81a2-95af-000b2ddeb25b': { Code: 0, Side: ['Left', 'Right', 'Both'], Place: ['Room temp', 'Fridge', 'Freezer', 'Thawed'], Container: ['Bag', 'Bottle'], Status: ['In stock', 'Used', 'Discarded'],
     Pumped: 0, Expires: 0, 'Amount (ml)': 0, 'Left (ml)': 0, 'Logged by': ['Sergio', 'Ana Rita'], Notes: 0 },
   '420f1d38-5f63-8145-a838-000b54a1d810': { Entry: 0, Time: 0, Kind: ['Wet', 'Dirty', 'Both'], Color: ['Yellow', 'Green', 'Brown', 'Black', 'Red', 'White'], 'Logged by': ['Sergio', 'Ana Rita'], Notes: 0 },
   '420f1d38-5f63-814a-ab7b-000b67b7af62': { Entry: 0, Start: 0, End: 0, 'Logged by': ['Sergio', 'Ana Rita'], Notes: 0,
@@ -59,6 +59,9 @@ await put('entries', 'p2', { type: 'pump', kind: 'right', start: now - 3600e3, e
 await put('milk', 'm3', { code: 'R-002-A', side: 'right', place: 'room', container: 'bottle', ml: 20, left: 20, pumpedAt: now - 3600e3 + 18 * 60e3, by: 'Ana Rita', deleted: false, discarded: false });
 await put('milk', 'm1', { code: 'BPL-001', side: 'left', place: 'fridge', ml: 50, left: 50, pumpedAt: now - 2 * 3600e3, by: 'Ana Rita', deleted: false, discarded: false });
 await put('milk', 'm2', { code: 'BPL-001-F', side: 'left', place: 'freezer', ml: 50, left: 50, pumpedAt: now - 2 * 3600e3, by: 'Ana Rita', deleted: false, discarded: false });
+await put('entries', 'p3', { type: 'pump', kind: 'left', start: now - 4 * 3600e3, end: now - 4 * 3600e3 + 10 * 60e3, ml: 30, code: 'LR-001', seq: null, lrSeq: 1, combined: true, combinedMl: 50, by: 'Sergio',
+  bags: [{ code: 'LR-001-B', place: 'fridge', container: 'bag', ml: 40 }, { code: 'LR-001-C', place: 'freezer', container: 'bag', ml: 10 }] });
+await put('milk', 'm4', { code: 'LR-001-B', side: 'both', place: 'fridge', container: 'bag', ml: 40, left: 40, pumpedAt: now - 4 * 3600e3 + 10 * 60e3, by: 'Sergio', deleted: false, discarded: false });
 await put('entries', 'f3', { type: 'feed', kind: 'right', start: now - 60e3, end: null, by: 'Sergio' }); // running
 await put('entries', 'b1', { type: 'feed', kind: 'bottle', start: now - 20 * 60e3, end: now - 8 * 60e3, ml: 50, by: 'Sergio', source: 'breast', targetMl: 60,
   preparedMl: 60, leftoverMl: 10, window: 'evening', uses: [{ id: 'm1', code: 'L-004-B', ml: 60, place: 'fridge', pumpedAt: now - 3600e3, window: 'evening' }] });
@@ -82,7 +85,10 @@ const b1 = Object.values(pages).find(p => p.props['Prepared (ml)']?.number === 6
 check(b1 && b1['Amount (ml)'].number === 50 && b1['Left over (ml)'].number === 10 && b1['Target (ml)'].number === 60 && b1['Duration (min)'].number === 12
   && b1['Time of day'].select.name === 'Evening' && b1.End.date && b1['Milk used'].rich_text[0].text.content === 'L-004-B (60 ml)', 'Timed bottle: eaten, left over, target, prepared, minutes, time of day, end');
 check(!Object.values(pages).some(p => p.props['Prepared (ml)']?.number === 70), 'Running bottle is not copied yet');
-check(Object.keys(pages).length === 12, `First run creates 12 Notion pages (got ${Object.keys(pages).length}); running feed and bottle skipped`);
+const p3 = Object.values(pages).find(p => p.props.Code?.title[0].text.content === 'LR-001' && p.props.Side)?.props;
+check(p3?.Side.select.name === 'Left' && p3['Amount (ml)'].number === 30 && p3['Fridge (ml)'].number === 24 && p3['Freezer (ml)'].number === 6 && p3.Bags.rich_text[0].text.content.startsWith('Combined Left + Right 50 ml: LR-001-B'), 'Combined pump: side row counts its share of the shared bags');
+check(Object.values(pages).find(p => p.props.Code?.title[0].text.content === 'LR-001-B')?.props.Side.select.name === 'Both', 'Combined bag goes to Milk Stock with Side Both');
+check(Object.keys(pages).length === 14, `First run creates 14 Notion pages (got ${Object.keys(pages).length}); running feed and bottle skipped`);
 const pp = Object.values(pages).find(p => p.ds.startsWith('422f1d38-5f63-8111'))?.props;
 check(pp?.Code.title[0].text.content === 'BPL-001' && pp.Side.select.name === 'Left' && pp['Fridge (ml)'].number === 50 && pp['Freezer (ml)'].number === 50, 'Pump goes to Pumps with code, side and split');
 const mk = c => Object.values(pages).find(p => p.props.Code?.title[0].text.content === c && p.props.Place);
@@ -101,7 +107,7 @@ const s1 = Object.values(pages).find(p => p.props.Start && !p.props.Cover?.selec
 check(s1 && s1['Day/Night'].select === null && s1['Room temp (°C)'].number === null, 'Older sleeps without details still copy (empty fields)');
 
 console.log((await run()).trim().replace(/^/gm, '     '));
-check(Object.keys(pages).length === 12, 'Second run with no changes creates nothing new');
+check(Object.keys(pages).length === 14, 'Second run with no changes creates nothing new');
 
 await put('entries', 'f3', { end: now + 9 * 60e3 });   // feed stopped
 await put('entries', 'b2', { end: now + 5 * 60e3, ml: 70, leftoverMl: 0 }); // bottle stopped
@@ -110,7 +116,7 @@ await put('entries', 'd1', { deleted: true });        // deleted
 await put('milk', 'm1', { left: 0 });                 // used up
 await put('milk', 'm2', { place: 'thawed', thawedAt: now }); // thawed
 console.log((await run()).trim().replace(/^/gm, '     '));
-check(Object.keys(pages).length === 14, 'Stopped feed and bottle get copied');
+check(Object.keys(pages).length === 16, 'Stopped feed and bottle get copied');
 check(Object.values(pages).find(p => p.props['Prepared (ml)']?.number === 70)?.props.Source.select.name === 'Other', 'Other bottle shows Source = Other');
 check(mk('BPL-001').props.Status.select.name === 'Used' && mk('BPL-001-F').props.Place.select.name === 'Thawed', 'Used-up and thawed portions update in Notion');
 check(Object.values(pages).find(p => p.props.Type?.select?.name === 'Bottle' && !p.props['Prepared (ml)'])?.props['Amount (ml)'].number === 120, 'Edit updates the same Notion page (90 → 120 ml)');

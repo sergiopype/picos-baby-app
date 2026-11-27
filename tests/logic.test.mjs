@@ -49,4 +49,9 @@ check(L.runningBottle(list) === list[0] && L.runningBottle(list.slice(1)) === nu
 check(L.lastTarget([{ type: 'feed', kind: 'bottle', targetMl: 70, ml: 55 }]) === 70 && L.lastTarget([{ type: 'feed', kind: 'bottle', ml: 90 }]) === 90 && L.lastTarget([]) === 60, 'Target starts at the last target (old bottles: their ml)');
 check(L.lastFeedSession(list).running, 'A running bottle counts as feeding now');
 
+// Combined Left + Right bags
+check(L.pumpCode('both', 7) === 'LR-007' && L.bagCodes('LR-007', [{ place: 'fridge' }, { place: 'freezer' }]).join() === 'LR-007-B,LR-007-C', 'Combined bags get LR codes');
+check(L.comboProblem([{ ml: 50 }]) === null && L.comboProblem([{ ml: 45 }, { ml: 5 }]) === null && !!L.comboProblem([{ ml: 50 }, { ml: 0 }]), 'Every combined bag needs some ml');
+check(L.maxSeq([{ type: 'pump', kind: 'left', seq: 4 }, { type: 'pump', kind: 'left', lrSeq: 3, combined: true }]).both === 3, 'LR numbers counted on their own');
+
 console.log(fails ? `\n${fails} FAILED` : '\nALL LOGIC TESTS PASSED'); process.exit(fails ? 1 : 0);

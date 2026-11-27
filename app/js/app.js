@@ -88,7 +88,7 @@ function babyAge(birth) {
   if (days < 84) return `${Math.floor(days / 7)} weeks ${days % 7 ? `${days % 7} d` : ''} old`;
   return `${Math.floor(days / 30.44)} months old`;
 }
-const side = k => (k === 'left' ? 'Left' : 'Right');
+const side = k => (k === 'left' ? 'Left' : k === 'both' ? 'Left + Right' : 'Right');
 // "Other" was called "Formula" before Nov 2026; old entries show as Other.
 const isOther = e => e.source === 'other' || e.source === 'formula';
 function bottleSource(e) {
@@ -640,11 +640,33 @@ function pumpTap() {
   openPumpCard(ps);
 }
 function newBag(ml) { return { ml, place: store.get('pumpPlace') || 'fridge', container: store.get('pumpContainer') || 'bag' }; }
+// Each side stores its milk separately ("Store separately") or both sides go into shared bags ("Combine all"),
+// never both. Combined bags: the first bag holds whatever the other bags don't, so they always add up to Left + Right.
 function openPumpCard(ps) {
   const mins = Math.max(1, Math.round((ps.end - ps.start) / L.MIN));
-  const sideState = () => ({ ml: 0, min: mins, bags: [newBag(0)] });
-  openSheet('pump', { sessionId: ps.id, pStart: ps.start, pEnd: ps.end, sides: { left: sideState(), right: sideState() }, note: ps.note || '', showNote: !!ps.note, confirmDiscard: false });
+  const sideState = () => ({ ml: 0, min: mins, bags: [newBag(0)], open: false });
+  openSheet('pump', { sessionId: ps.id, pStart: ps.start, pEnd: ps.end, sides: { left: sideState(), right: sideState() },
+    combo: { open: false, bags: [newBag(0)] }, note: ps.note || '', showNote: !!ps.note, confirmDiscard: false });
 }
+const pumpTotal = sh => sh.sides.left.ml + sh.sides.right.ml;
+const pumpMode = sh => (sh.combo.open ? 'combined' : sh.sides.left.open || sh.sides.right.open ? 'separate' : null);
+// The first combined bag is the rest of the total.
+function fixCombo(sh) {
+  const total = pumpTotal(sh), bags = sh.combo.bags;
+  let rest = bags.slice(1).reduce((a, b) => a + (b.ml || 0), 0);
+  for (let i = bags.length - 1; i > 0 && rest > total; i--) { const cut = Math.min(bags[i].ml, rest - total); bags[i].ml -= cut; rest -= cut; }
+  bags[0].ml = total - rest;
+}
+function pumpProblem(sh) {
+  const mode = pumpMode(sh);
+  if (mode === 'combined') return L.comboProblem(sh.combo.bags);
+  if (mode === 'separate') return ['left', 'right'].map(k => sh.sides[k].open && L.sideProblem(sh.sides[k]) && `${side(k)}: ${L.sideProblem(sh.sides[k])}`).filter(Boolean)[0] || null;
+  return null;
+}
+const pumpHint = (sh, total) => !total ? 'Add the ml for at least one side.'
+  : !pumpMode(sh) ? 'Choose Store separately or Combine all.' : 'The codes to write on the bags show after saving.';
+const placeChips = (b, attr) => `<div class="seg">${['room', 'fridge', 'freezer'].map(v => `<button class="chip ${b.place === v ? 'on' : ''}" ${attr('place', v)}>${PLACE[v]}</button>`).join('')}</div>
+      <div class="seg" style="margin-top:6px">${['bag', 'bottle'].map(v => `<button class="chip ${b.container === v ? 'on' : ''}" ${attr('cont', v)}>${CONTAINER[v]}</button>`).join('')}</div>`;
 function pumpSideBlock(k) {
   const sd = S.sheet.sides[k];
   const many = sd.bags.length > 1;
@@ -653,74 +675,149 @@ function pumpSideBlock(k) {
       <div class="bag-top"><b>${many ? `Bag ${i + 1}` : 'Storage'}</b>
         ${many ? `<span class="num-in"><button data-pstep="${k}.bags.${i}.ml:-5">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.bags.${i}.ml" value="${b.ml || 0}"><span>ml</span><button data-pstep="${k}.bags.${i}.ml:5">+</button></span>
           <button class="rm" data-rmbag="${k}:${i}" aria-label="Remove bag">✕</button>` : ''}</div>
-      <div class="seg">${['room', 'fridge', 'freezer'].map(v => `<button class="chip ${b.place === v ? 'on' : ''}" data-pplace="${k}:${i}:${v}">${PLACE[v]}</button>`).join('')}</div>
-      <div class="seg" style="margin-top:6px">${['bag', 'bottle'].map(v => `<button class="chip ${b.container === v ? 'on' : ''}" data-pcont="${k}:${i}:${v}">${CONTAINER[v]}</button>`).join('')}</div>
+      ${placeChips(b, (w, v) => `data-p${w}="${k}:${i}:${v}"`)}
     </div>`;
   const left = sd.ml - assigned;
   return `<div class="amount pside ${sd.ml > 0 ? 'on' : ''}"><div class="top"><span class="label">${side(k)}</span>
       <span class="num-in big"><button data-pstep="${k}.ml:-5">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.ml" value="${sd.ml}"><span>ml</span><button data-pstep="${k}.ml:5">+</button></span></div>
     ${sd.ml > 0 ? `<div class="top" style="margin-top:8px"><span class="fine" style="margin:0">Minutes</span>
       <span class="num-in"><button data-pstep="${k}.min:-1">−</button><input type="number" inputmode="numeric" min="0" data-pin="${k}.min" value="${sd.min}"><span>min</span><button data-pstep="${k}.min:1">+</button></span></div>
-      ${sd.bags.map(bag).join('')}
+      <button class="storebtn ${sd.open ? 'on' : ''}" data-pstore="${k}" aria-expanded="${sd.open}">Store separately<span>${sd.open ? '▴' : '▾'}</span></button>
+      ${sd.open ? `${sd.bags.map(bag).join('')}
       ${many ? `<p class="counter ${left ? 'off' : ''}" id="cnt-${k}">${left > 0 ? `${left} ml still to put in a bag` : left < 0 ? `${-left} ml too many` : 'All ml in bags ✓'}</p>` : ''}
-      <button class="notebtn" data-addbag="${k}">+ Add bag</button>` : '<p class="fine" style="margin:6px 0 0">0 ml = not pumped</p>'}
+      <button class="notebtn" data-addbag="${k}">+ Add bag</button>` : ''}` : '<p class="fine" style="margin:6px 0 0">0 ml = not pumped</p>'}
   </div>`;
+}
+function comboBlock() {
+  const sh = S.sheet, c = sh.combo, total = pumpTotal(sh);
+  if (!total) return '';
+  const many = c.bags.length > 1;
+  const bag = (b, i) => `<div class="bag">
+      <div class="bag-top"><b>${many ? `Bag ${i + 1}` : 'Quantity'}</b>
+        ${many || i > 0 ? `<span class="num-in"><button data-cstep="${i}:-5">−</button><input type="number" inputmode="numeric" min="0" data-cin="${i}" value="${b.ml || 0}"><span>ml</span><button data-cstep="${i}:5">+</button></span>
+          <button class="rm" data-crmbag="${i}" aria-label="Remove bag">✕</button>` : `<span class="combo-ml"><b data-cml="0">${b.ml}</b> ml</span>`}</div>
+      ${placeChips(b, (w, v) => `data-c${w}="${i}:${v}"`)}
+    </div>`;
+  return `<button class="btn wide storebtn-all ${c.open ? 'on' : ''}" data-act="combine" aria-expanded="${c.open}">Combine all${c.open ? ` · ${total} ml ▴` : ' ▾'}</button>
+    ${c.open ? `<div class="amount pside on combo"><div class="top"><span class="label">Left + Right</span><span class="label">${total} ml</span></div>
+      ${c.bags.map(bag).join('')}
+      ${many ? '<p class="fine" style="margin:8px 0 0">Bag 1 holds what the other bags don\'t, so the bags always add up to the total.</p>' : ''}
+      <button class="notebtn" data-caddbag="1">+ Add bag</button></div>` : ''}`;
 }
 function pumpBody() {
   const sh = S.sheet;
   sh.needsRedraw = false;
   for (const k of ['left', 'right']) sh.sides[k].shown = sh.sides[k].ml > 0;
-  const problem = ['left', 'right'].map(k => L.sideProblem(sh.sides[k]) && `${side(k)}: ${L.sideProblem(sh.sides[k])}`).filter(Boolean)[0];
-  const total = sh.sides.left.ml + sh.sides.right.ml;
+  sh.comboShown = pumpTotal(sh) > 0;
+  fixCombo(sh);
+  const problem = pumpProblem(sh), total = pumpTotal(sh);
   return `<div class="sheet-title"><h2>Pump · ${dur(sh.pEnd - sh.pStart)}</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
     ${pumpSideBlock('left')}${pumpSideBlock('right')}
+    ${comboBlock()}
     ${noteBlock()}
-    <p class="fine" id="pump-problem">${problem || (total ? 'The codes to write on the bags show after saving.' : 'Add the ml for at least one side.')}</p>
-    <button class="save pumpsave wide-save" data-act="savepump" ${sh.saving || problem || !total ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save · ${total} ml`}</button>
-    <button class="btn danger wide" style="margin-top:10px" data-act="discardsession">${sh.confirmDiscard ? 'Tap again to discard this session' : 'Discard session'}</button>`;
+    <p class="fine" id="pump-problem">${problem || pumpHint(sh, total)}</p>
+    <div class="btn-row end"><button class="btn" data-act="close">Cancel</button>
+      <button class="btn primary pumpsave" data-act="savepump" ${sh.saving || problem || !total ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save · ${total} ml`}</button></div>
+    ${sh.saved ? '' : `<button class="btn danger wide" style="margin-top:18px" data-act="discardsession">${sh.confirmDiscard ? 'Tap again to discard this session' : 'Discard session'}</button>`}`;
 }
 // Number fields in the pump card update the state as you type (no redraw, so the keyboard stays up).
 function pumpInput(el) {
-  const path = el.dataset.pin.split('.');
+  const sh = S.sheet;
   const v = Math.max(0, Math.round(Number(el.value) || 0));
-  let o = S.sheet.sides;
+  if (el.dataset.cin != null) return setComboMl(sh, +el.dataset.cin, v);
+  const path = el.dataset.pin.split('.');
+  let o = sh.sides;
   for (const k of path.slice(0, -1)) o = o[k];
   o[path.at(-1)] = v;
   const [k, f] = path;
   if (f === 'ml' && path.length === 2) {
-    const sd = S.sheet.sides[k];
+    const sd = sh.sides[k];
     if (sd.bags.length === 1) sd.bags[0].ml = v;
-    if ((v > 0) !== !!sd.shown) S.sheet.needsRedraw = true; // bags appear/disappear
+    if ((v > 0) !== !!sd.shown || (pumpTotal(sh) > 0) !== !!sh.comboShown) sh.needsRedraw = true; // bags appear/disappear
+    fixCombo(sh);
   }
 }
+// Setting a combined bag: bag 1 takes the difference. Setting bag 1 itself moves the difference to the last bag.
+function setComboMl(sh, i, v) {
+  const bags = sh.combo.bags, total = pumpTotal(sh);
+  if (i === 0) {
+    if (bags.length < 2) return fixCombo(sh);
+    const last = bags.at(-1), others = bags.slice(1, -1).reduce((a, b) => a + (b.ml || 0), 0);
+    last.ml = Math.max(0, total - others - Math.min(v, total - others));
+  } else {
+    const others = bags.slice(1).reduce((a, b, j) => a + (j + 1 === i ? 0 : b.ml || 0), 0);
+    bags[i].ml = Math.min(v, Math.max(0, total - others));
+  }
+  fixCombo(sh);
+}
+// Saving with no storage chosen: say so and open Store separately on each side that has milk.
+function needStorage(sh) {
+  const missing = ['left', 'right'].filter(k => sh.sides[k].ml > 0 && !sh.sides[k].open);
+  if (pumpMode(sh) === 'combined' || !missing.length) return false;
+  sh.combo.open = false;
+  for (const k of ['left', 'right']) if (sh.sides[k].ml > 0) sh.sides[k].open = true;
+  drawSheet();
+  alertBox('Choose how to store the milk', missing.length === 2 || !pumpMode(sh) ? 'Pick the storage for Left and Right under Store separately, or use Combine all.' : `Pick the storage for ${side(missing[0])} too.`);
+  return true;
+}
+// Saves the pump. After Back on the codes page, saving again updates the same records, bags and codes.
 async function savePump() {
   const sh = S.sheet;
   if (sh.saving) return;
-  sh.note = readNote(); sh.saving = true; drawSheet();
+  sh.note = readNote();
+  if (needStorage(sh)) return;
+  sh.saving = true; drawSheet();
+  const prev = sh.saved || { entry: {}, milk: [], seq: {} };
+  const pool = [...prev.milk];
+  const saved = { entry: {}, milk: [], seq: { ...prev.seq } };
   const labels = [], made = [];
   let offline = false;
-  for (const k of ['left', 'right']) {
-    const sd = sh.sides[k];
-    if (!(sd.ml > 0)) continue;
-    if (sd.bags.length === 1) sd.bags[0].ml = sd.ml;
+  const seqFor = async k => {
+    if (saved.seq[k]) return saved.seq[k];
     const r = await db.nextPumpSeq(k, L.maxSeq(all())[k]);
     offline ||= r.offline;
-    const code = L.pumpCode(k, r.seq), codes = L.bagCodes(code, sd.bags);
-    const end = Math.min(sh.pEnd, sh.pStart + sd.min * L.MIN);
-    const portions = sd.bags.map((b, i) => {
-      const id = db.newMilkId();
-      db.saveMilk(id, { code: codes[i], pumpCode: code, side: k, place: b.place, container: b.container, ml: b.ml, left: b.ml, pumpedAt: end,
+    return (saved.seq[k] = r.seq);
+  };
+  const makeBags = (code, bags, sideKey, pumpedAt) => {
+    const codes = L.bagCodes(code, bags);
+    const portions = bags.map((b, i) => {
+      const id = pool.shift() || db.newMilkId();
+      db.saveMilk(id, { code: codes[i], pumpCode: code, side: sideKey, place: b.place, container: b.container, ml: b.ml, left: b.ml, pumpedAt,
         thawedAt: null, by: S.me, note: '', deleted: false, discarded: false, createdAt: Date.now() });
-      labels.push({ side: k, code: codes[i], place: b.place, container: b.container, ml: b.ml });
+      labels.push({ side: sideKey, code: codes[i], place: b.place, container: b.container, ml: b.ml });
+      saved.milk.push(id);
       return id;
     });
-    const bags = sd.bags.map((b, i) => ({ code: codes[i], place: b.place, container: b.container, ml: b.ml }));
-    const id = db.newId();
-    db.saveEntry(id, { id, type: 'pump', kind: k, start: sh.pStart, end, ml: sd.ml, code, seq: r.seq, bags, portions, sessionId: sh.sessionId,
-      note: sh.note, by: S.me, createdAt: Date.now(), deleted: false, color: null });
-    made.push({ id, portions });
-    const last = sd.bags.at(-1); store.set('pumpPlace', last.place); store.set('pumpContainer', last.container);
+    return { portions, bags: bags.map((b, i) => ({ code: codes[i], place: b.place, container: b.container, ml: b.ml })) };
+  };
+  const sideEnd = k => Math.min(sh.pEnd, sh.pStart + sh.sides[k].min * L.MIN);
+  const sidesWithMilk = ['left', 'right'].filter(k => sh.sides[k].ml > 0);
+  const saveSide = (k, fields) => {
+    const sd = sh.sides[k], id = prev.entry[k] || db.newId();
+    db.saveEntry(id, { id, type: 'pump', kind: k, start: sh.pStart, end: sideEnd(k), ml: sd.ml, sessionId: sh.sessionId,
+      note: sh.note, by: S.me, createdAt: Date.now(), deleted: false, color: null, ...fields });
+    saved.entry[k] = id;
+    made.push({ id, portions: fields.portions });
+  };
+  if (pumpMode(sh) === 'combined') {
+    fixCombo(sh);
+    const seq = await seqFor('both'), code = L.pumpCode('both', seq), total = pumpTotal(sh);
+    const { portions, bags } = makeBags(code, sh.combo.bags, 'both', Math.max(...sidesWithMilk.map(sideEnd)));
+    for (const k of sidesWithMilk) saveSide(k, { code, seq: null, lrSeq: seq, combined: true, combinedMl: total, bags, portions });
+    const last = sh.combo.bags.at(-1); store.set('pumpPlace', last.place); store.set('pumpContainer', last.container);
+  } else {
+    for (const k of sidesWithMilk) {
+      const sd = sh.sides[k];
+      if (sd.bags.length === 1) sd.bags[0].ml = sd.ml;
+      const seq = await seqFor(k), code = L.pumpCode(k, seq);
+      const { portions, bags } = makeBags(code, sd.bags, k, sideEnd(k));
+      saveSide(k, { code, seq, lrSeq: null, combined: false, combinedMl: null, bags, portions });
+      const last = sd.bags.at(-1); store.set('pumpPlace', last.place); store.set('pumpContainer', last.container);
+    }
   }
+  // Bags and records from the earlier save that aren't needed any more.
+  for (const id of pool) db.saveMilk(id, { deleted: true });
+  for (const k of ['left', 'right']) if (prev.entry[k] && !saved.entry[k]) db.saveEntry(prev.entry[k], { deleted: true });
   db.saveEntry(sh.sessionId, { deleted: true });
   buzz();
   toast(`Pump saved · ${labels.map(l => l.code).join(', ')}`, [{ label: 'Undo', fn: () => {
@@ -728,7 +825,8 @@ async function savePump() {
     db.saveEntry(sh.sessionId, { deleted: false });
   } }]);
   if (!S.sheet) return; // closed while saving
-  S.sheet = { kind: 'pumped', labels, offline, total: sh.sides.left.ml + sh.sides.right.ml, minutes: Math.round((sh.pEnd - sh.pStart) / L.MIN) };
+  const form = { ...sh, saving: false, saved };
+  S.sheet = { kind: 'pumped', labels, offline, total: pumpTotal(sh), minutes: Math.round((sh.pEnd - sh.pStart) / L.MIN), form };
   drawSheet();
 }
 function pumpedBody() {
@@ -736,10 +834,26 @@ function pumpedBody() {
   const group = k => sh.labels.filter(l => l.side === k);
   return `<div class="sheet-title"><h2>Saved · ${sh.total} ml</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
     <div class="section-label">Write on the bag${sh.labels.length > 1 ? 's' : ''}</div>
-    ${['left', 'right'].filter(k => group(k).length).map(k => `<div class="fine" style="margin:8px 0 4px"><b>${side(k)}</b></div>
+    ${['left', 'right', 'both'].filter(k => group(k).length).map(k => `<div class="fine" style="margin:8px 0 4px"><b>${k === 'both' ? 'Left + Right combined' : side(k)}</b></div>
       ${group(k).map(l => `<div class="label-card ${l.place}"><span class="code">${esc(l.code)}</span><span>${PLACE[l.place]} · ${CONTAINER[l.container]} · ${l.ml} ml</span></div>`).join('')}`).join('')}
     ${sh.offline ? '<p class="fine">No signal, so the numbers were given on this phone. They only clash if the other phone saved the same breast while offline too.</p>' : ''}
-    <button class="btn primary wide" style="margin-top:14px" data-act="close">Done</button>`;
+    <div class="btn-row" style="margin-top:14px"><button class="btn" data-act="pumpback">Back</button><button class="btn primary" data-act="close">Done</button></div>`;
+}
+// Back on the codes page: the Pump page again, as it was, to change the storage.
+function pumpBack() {
+  const form = S.sheet?.form;
+  if (!form) return;
+  S.sheet = form;
+  drawSheet();
+  $('#sheet').scrollTop = 0;
+}
+function alertBox(text, sub) {
+  const el = document.createElement('div');
+  el.className = 'confirm';
+  el.innerHTML = `<div class="confirm-box" role="alertdialog"><p>${esc(text)}</p>${sub ? `<p class="fine" style="margin:0 0 14px;font-weight:400;font-size:16px">${esc(sub)}</p>` : ''}
+    <div class="btn-row"><button class="btn primary" data-cf="ok">OK</button></div></div>`;
+  el.addEventListener('click', ev => { ev.stopPropagation(); if (ev.target.closest('[data-cf]')) el.remove(); });
+  document.body.appendChild(el);
 }
 function discardSession() {
   const id = S.sheet.sessionId;
@@ -1192,7 +1306,7 @@ document.addEventListener('click', ev => {
     return drawSheet();
   }
   if (ds.lstep) { keepFeedInputs(); S.sheet.leftover = Math.max(0, (S.sheet.leftover || 0) + +ds.lstep); return drawSheet(); }
-  if (ds.pstep || ds.pplace || ds.pcont || ds.addbag || ds.rmbag) {
+  if (ds.pstep || ds.pplace || ds.pcont || ds.addbag || ds.rmbag || ds.pstore || ds.cstep || ds.cplace || ds.ccont || ds.caddbag || ds.crmbag) {
     const sh = S.sheet; if (sh.showNote) sh.note = readNote();
     if (ds.pstep) {
       const [path, d] = ds.pstep.split(':'), parts = path.split('.');
@@ -1200,6 +1314,12 @@ document.addEventListener('click', ev => {
       const f = parts.at(-1); o[f] = Math.max(0, (o[f] || 0) + +d);
       if (parts.length === 2 && f === 'ml' && sh.sides[parts[0]].bags.length === 1) sh.sides[parts[0]].bags[0].ml = o[f];
     }
+    if (ds.pstore) { const sd = sh.sides[ds.pstore]; sd.open = !sd.open; if (sd.open) sh.combo.open = false; }
+    if (ds.cstep) { const [i, d] = ds.cstep.split(':').map(Number); setComboMl(sh, i, Math.max(0, (sh.combo.bags[i].ml || 0) + d)); }
+    if (ds.cplace) { const [i, v] = ds.cplace.split(':'); sh.combo.bags[+i].place = v; }
+    if (ds.ccont) { const [i, v] = ds.ccont.split(':'); sh.combo.bags[+i].container = v; }
+    if (ds.caddbag) { const prev = sh.combo.bags.at(-1); sh.combo.bags.push({ ml: 0, place: prev.place, container: prev.container }); }
+    if (ds.crmbag) sh.combo.bags.splice(+ds.crmbag, 1);
     if (ds.pplace) { const [k, i, v] = ds.pplace.split(':'); sh.sides[k].bags[+i].place = v; }
     if (ds.pcont) { const [k, i, v] = ds.pcont.split(':'); sh.sides[k].bags[+i].container = v; }
     if (ds.addbag) {
@@ -1240,6 +1360,13 @@ document.addEventListener('click', ev => {
     case 'savebottle': return saveBottle();
     case 'pump': return pumpTap();
     case 'savepump': return savePump();
+    case 'pumpback': return pumpBack();
+    case 'combine': {
+      const sh = S.sheet; if (sh.showNote) sh.note = readNote();
+      sh.combo.open = !sh.combo.open;
+      if (sh.combo.open) for (const k of ['left', 'right']) sh.sides[k].open = false;
+      return drawSheet();
+    }
     case 'discardsession':
       if (!S.sheet.confirmDiscard) { S.sheet.note = readNote(); S.sheet.confirmDiscard = true; return drawSheet(); }
       return discardSession();
@@ -1289,22 +1416,28 @@ document.addEventListener('input', ev => {
     const el = $('#eaten'); if (el) el.innerHTML = `Baby ate <b>${r.ml} ml</b> of ${prepared} ml.${r.leftoverMl !== S.sheet.leftover ? ' (left over can\'t be more than prepared)' : ''}`;
     return;
   }
-  if (!S.sheet || S.sheet.kind !== 'pump' || !ev.target.dataset.pin) return;
+  const isPin = ev.target.dataset.pin || ev.target.dataset.cin != null;
+  if (!S.sheet || S.sheet.kind !== 'pump' || !isPin) return;
   pumpInput(ev.target);
-  // Refresh counters and the save button without redrawing (keeps the keyboard open).
+  // Refresh counters, combined bags and the save button without redrawing (keeps the keyboard open).
   const sh = S.sheet;
   for (const k of ['left', 'right']) {
     const el = document.getElementById('cnt-' + k), sd = sh.sides[k];
     if (el) { const l = sd.ml - sd.bags.reduce((a, b) => a + (b.ml || 0), 0); el.textContent = l > 0 ? `${l} ml still to put in a bag` : l < 0 ? `${-l} ml too many` : 'All ml in bags ✓'; el.classList.toggle('off', !!l); }
   }
-  const problem = ['left', 'right'].map(k => L.sideProblem(sh.sides[k]) && `${side(k)}: ${L.sideProblem(sh.sides[k])}`).filter(Boolean)[0];
-  const total = sh.sides.left.ml + sh.sides.right.ml, btn = $('[data-act="savepump"]');
+  sh.combo.bags.forEach((b, i) => {
+    const inp = document.querySelector(`[data-cin="${i}"]`); if (inp && inp !== ev.target) inp.value = b.ml;
+    const t = document.querySelector(`[data-cml="${i}"]`); if (t) t.textContent = b.ml;
+  });
+  const problem = pumpProblem(sh), total = pumpTotal(sh), btn = $('[data-act="savepump"]');
   if (btn) { btn.disabled = !!problem || !total; btn.textContent = `Save · ${total} ml`; }
-  const pr = $('#pump-problem'); if (pr) pr.textContent = problem || (total ? 'The codes to write on the bags show after saving.' : 'Add the ml for at least one side.');
+  const pr = $('#pump-problem'); if (pr) pr.textContent = problem || pumpHint(sh, total);
 });
-// A side's ml going from 0 to more (or back) shows/hides its bags: redraw when the field is left.
+// A side's ml going from 0 to more (or back) shows/hides its bags, and a typed combined bag may have been capped:
+// redraw when the field is left.
 document.addEventListener('change', ev => {
-  if (S.sheet?.kind === 'pump' && ev.target.dataset.pin && S.sheet.needsRedraw) { if (S.sheet.showNote) S.sheet.note = readNote(); drawSheet(); }
+  if (S.sheet?.kind !== 'pump') return;
+  if ((ev.target.dataset.pin && S.sheet.needsRedraw) || ev.target.dataset.cin != null || (ev.target.dataset.pin && S.sheet.combo.open)) { if (S.sheet.showNote) S.sheet.note = readNote(); drawSheet(); }
 });
 
 // Night light checkbox and temperature (sleep card and edit sheet).
