@@ -54,6 +54,7 @@ button { cursor: pointer; border: 0; background: none; }
 /* ---------- Layout ---------- */
 /* Home is one fixed screen: no scrolling. */
 html.home-fixed, html.home-fixed body { overflow: hidden; height: 100dvh; }
+html.sheet-open, html.sheet-open body { overflow: hidden; } /* the page underneath stays put */
 html.home-fixed .screen { padding-bottom: 0; }
 .now + .stockline { margin: 10px 0 0; }
 .diaper-go { margin-top: 14px; }
@@ -192,20 +193,15 @@ html.home-fixed .screen { padding-bottom: 0; }
 .save:disabled { opacity: .6; }
 .act.running { outline: 4px solid var(--text); outline-offset: -4px; }
 
-/* ---------- Bottom sheet ---------- */
-#sheet-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .5); z-index: 10; }
+/* ---------- Full-page cards (Feed, Pump, Sleep, Diaper, bag, record editor, contact) ---------- */
+/* A card covers the whole screen like the Milk stock page. Close with ✕ or the phone's back button. */
 #sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; max-height: 92dvh; overflow-y: auto;
-  background: var(--bg); border-radius: 24px 24px 0 0; padding: 10px 16px calc(18px + env(safe-area-inset-bottom));
-  max-width: 560px; margin: 0 auto; box-shadow: 0 -8px 30px rgb(0 0 0 / .35);
+  position: fixed; inset: 0; z-index: 11; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg);
+  padding: calc(12px + env(safe-area-inset-top)) max(16px, calc((100% - 528px) / 2)) calc(24px + env(safe-area-inset-bottom));
 }
-.grab { width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto; }
-/* The full-width strip at the top of a card, with the handle: swipe down here (or on the dimmed area above) to close. */
-.grabzone { margin: -10px -16px 0; padding: 14px 0 16px; touch-action: none; }
-#sheet { transition: transform .18s ease; }
-#sheet-backdrop { touch-action: none; }
-.sheet-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.sheet-title h2 { margin: 0; font-size: 22px; }
+.sheet-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 12px; margin-bottom: 4px; }
+.sheet-title h2 { margin: 0; font-size: 22px; line-height: 1.1; }
 .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }
 .big-choice {

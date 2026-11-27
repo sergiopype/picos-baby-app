@@ -368,10 +368,12 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) rend
 
 // ---------- Sheets ----------
 function openSheet(kind, data = {}) {
-  if (!S.sheet) history.pushState({ sheet: true }, '');
+  const fresh = !S.sheet;
+  if (fresh) history.pushState({ sheet: true }, '');
   S.sheet = { kind, start: null, color: null, note: '', showNote: false, ...data };
   drawSheet();
-  $('#sheet').hidden = false; $('#sheet-backdrop').hidden = false;
+  $('#sheet').hidden = false; document.documentElement.classList.add('sheet-open');
+  if (fresh) $('#sheet').scrollTop = 0;
 }
 function closeSheet(fromBack = false) {
   if (!S.sheet) return;
@@ -381,7 +383,7 @@ function closeSheet(fromBack = false) {
     if (e && e.end == null && note !== (e.note || '')) db.saveEntry(e.id, { note });
   }
   S.sheet = null;
-  $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true;
+  $('#sheet').hidden = true; document.documentElement.classList.remove('sheet-open');
   if (!fromBack) { S.ignorePop = true; history.back(); }
   render();
 }
@@ -440,7 +442,7 @@ function drawSheet() {
       ${noteBlock()}`;
   } else if (sh.kind === 'edit') body = editBody();
   else if (sh.kind === 'contact') body = contactBody();
-  el.innerHTML = `<div class="grabzone" aria-hidden="true"><div class="grab"></div></div>${body}`;
+  el.innerHTML = body;
 }
 
 // ---------- Feed card ----------
@@ -1059,8 +1061,7 @@ function hideToast() {
 }
 
 // ---------- Swipe gestures ----------
-// Swipe the toast left or right to dismiss it. Swipe a card down from its top (the grey handle
-// or the title line) to close it, same as the X. A short movement still counts as a normal tap.
+// Swipe the toast left or right to dismiss it. A short movement still counts as a normal tap.
 function swipe(el, { start, axis, done, threshold, move }) {
   let s = null;
   const src = el; el = move || el; // touches are read on src, the movement is shown on el
@@ -1107,12 +1108,6 @@ swipe($('#app'), {
   axis: 'y', threshold: 90, done: () => { if (S.view === 'activity') history.back(); },
   start: ev => S.view === 'activity' && !S.sheet && window.scrollY <= 0 && !!ev.target.closest('.activity-screen .topbar'),
 });
-swipe($('#sheet'), {
-  axis: 'y', threshold: 90, done: () => closeSheet(),
-  // Only from the top strip with the handle. Inside the card a swipe just scrolls.
-  start: ev => !!ev.target.closest('.grabzone'),
-});
-swipe($('#sheet-backdrop'), { axis: 'y', threshold: 90, done: () => closeSheet(), move: $('#sheet'), start: () => !!S.sheet });
 
 // ---------- Taps ----------
 document.addEventListener('click', ev => {
