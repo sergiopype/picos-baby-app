@@ -101,20 +101,15 @@ check(await hasRow(A, 'Bottle · 80 ml'), 'A: bottle 80 ml saved (default 60 + 2
 check(await A.isVisible('.act.feed:not(.running)'), 'Feed button back to normal');
 await A.click('[data-act="feed"]'); await A.click('.bottle-btn');
 check(await A.isVisible('.stepper .val:has-text("80 ml")'), 'Bottle remembers the last target (80 ml)');
-await drag(A, '#sheet .choices', 0, 200); await sleep(300);
-check(await A.isVisible('#sheet'), 'Card: dragging down in the middle does not close it');
-await drag(A, '#sheet .grab', 0, 25); await sleep(300);
-check(await A.isVisible('#sheet'), 'Card: a short pull on the handle springs back');
-await drag(A, '#sheet .sheet-title h2', 0, 200); await sleep(300);
-check(await A.isVisible('#sheet'), 'Card: dragging down on the title does not close it (top strip only)');
-await A.mouse.click(190, 20); await sleep(300);
-check(await A.isVisible('#sheet'), 'Card: tapping the dimmed area does not close it');
-await drag(A, '#sheet-backdrop', 0, 200); await sleep(400);
-check(!(await A.isVisible('#sheet')), 'Card: swiping down on the dimmed area above closes it');
-await A.click('[data-act="feed"]');
-await drag(A, '#sheet .grab', 0, 200); await sleep(400);
-check(!(await A.isVisible('#sheet')), 'Card: swiping down from the handle closes it');
-check(await has(A, 'Last feed'), 'Card swipe-close returns to home');
+{ const r = await A.evaluate(() => { const b = document.querySelector('#sheet').getBoundingClientRect(); return [b.top, b.left, b.width - innerWidth, b.height - innerHeight]; });
+  check(r.every(v => Math.abs(v) < 2), `Card: opens as a full page (${r.join(', ')})`); }
+check(await A.locator('#sheet .grab, #sheet-backdrop').count() === 0, 'Card: no handle or dimmed area any more');
+await drag(A, '#sheet .sheet-title h2', 0, 200); await sleep(400);
+check(await A.isVisible('#sheet'), 'Card: dragging down does not close the page');
+await A.goBack(); await sleep(300);
+check(!(await A.isVisible('#sheet')) && await has(A, 'Last feed'), 'Card: phone back button closes the page and returns home');
+await A.click('[data-act="feed"]'); await A.click('#sheet [data-act="close"]'); await sleep(200);
+check(!(await A.isVisible('#sheet')) && await has(A, 'Last feed'), 'Card: ✕ closes the page and returns home');
 
 // Sleep: one tap starts the timer and opens the card; details save live; stop inside the card
 await A.click('[data-act="sleep"]');
