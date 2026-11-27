@@ -388,3 +388,7 @@ body.toast-on #sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom));
 .btn-row.end .btn { flex: 0 0 auto; min-width: 110px; }
 .btn.pumpsave { background: var(--pump); color: var(--on-accent); font-weight: 800; }
 .btn:disabled { opacity: .55; }
+/* Codes page: Back and Done always at the bottom of the screen */
+.pumped-page { display: flex; flex-direction: column; min-height: 100%; }
+.sheet-foot { margin-top: auto; position: sticky; bottom: 0; padding: 14px 0 4px; background: var(--bg); }
+.btn.danger.sure { background: color-mix(in srgb, var(--danger) 14%, var(--card)); }

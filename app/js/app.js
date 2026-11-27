@@ -716,9 +716,10 @@ function pumpBody() {
     ${comboBlock()}
     ${noteBlock()}
     <p class="fine" id="pump-problem">${problem || pumpHint(sh, total)}</p>
-    <div class="btn-row end"><button class="btn" data-act="close">Cancel</button>
-      <button class="btn primary pumpsave" data-act="savepump" ${sh.saving || problem || !total ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save · ${total} ml`}</button></div>
-    ${sh.saved ? '' : `<button class="btn danger wide" style="margin-top:18px" data-act="discardsession">${sh.confirmDiscard ? 'Tap again to discard this session' : 'Discard session'}</button>`}`;
+    <div class="btn-row end">${sh.saved
+      ? '<button class="btn" data-act="close">Cancel</button>' // after Back: keeps what was already saved
+      : `<button class="btn danger ${sh.confirmDiscard ? 'sure' : ''}" data-act="discardsession">${sh.confirmDiscard ? 'Tap again to discard' : 'Cancel'}</button>`}
+      <button class="btn primary pumpsave" data-act="savepump" ${sh.saving || problem || !total ? 'disabled' : ''}>${sh.saving ? 'Saving…' : `Save · ${total} ml`}</button></div>`;
 }
 // Number fields in the pump card update the state as you type (no redraw, so the keyboard stays up).
 function pumpInput(el) {
@@ -832,12 +833,12 @@ async function savePump() {
 function pumpedBody() {
   const sh = S.sheet;
   const group = k => sh.labels.filter(l => l.side === k);
-  return `<div class="sheet-title"><h2>Saved · ${sh.total} ml</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
+  return `<div class="pumped-page"><div class="sheet-title"><h2>Saved · ${sh.total} ml</h2><button class="iconbtn" data-act="close" aria-label="Close">✕</button></div>
     <div class="section-label">Write on the bag${sh.labels.length > 1 ? 's' : ''}</div>
     ${['left', 'right', 'both'].filter(k => group(k).length).map(k => `<div class="fine" style="margin:8px 0 4px"><b>${k === 'both' ? 'Left + Right combined' : side(k)}</b></div>
       ${group(k).map(l => `<div class="label-card ${l.place}"><span class="code">${esc(l.code)}</span><span>${PLACE[l.place]} · ${CONTAINER[l.container]} · ${l.ml} ml</span></div>`).join('')}`).join('')}
     ${sh.offline ? '<p class="fine">No signal, so the numbers were given on this phone. They only clash if the other phone saved the same breast while offline too.</p>' : ''}
-    <div class="btn-row" style="margin-top:14px"><button class="btn" data-act="pumpback">Back</button><button class="btn primary" data-act="close">Done</button></div>`;
+    <div class="btn-row sheet-foot"><button class="btn" data-act="pumpback">Back</button><button class="btn primary" data-act="close">Done</button></div></div>`;
 }
 // Back on the codes page: the Pump page again, as it was, to change the storage.
 function pumpBack() {

@@ -203,12 +203,15 @@ check(await B.inputValue('[data-cin="0"]') === '95' && await B.inputValue('[data
 await B.click('[data-cplace="1:freezer"]');
 await B.evaluate(() => { document.querySelector('[data-act="combine"]').scrollIntoView(); });
 await B.screenshot({ path: shots + '/8b-pump-combined.png' });
-check(await B.isVisible('.btn-row.end [data-act="close"]:has-text("Cancel")'), 'Cancel next to Save');
+check(await B.isVisible('.btn-row.end [data-act="discardsession"]:has-text("Cancel")') && await B.locator('[data-act="discardsession"]').count() === 1, 'Cancel (discard session) next to Save, no separate Discard button');
 await B.click('[data-act="savepump"]');
 { await B.locator('.label-card .code').first().waitFor({ timeout: 8000 });
   const c = await B.locator('.label-card .code').allTextContents();
   check(c.join() === 'LR-001-B,LR-001-C', `Combined bags get LR codes (${c.join(' ')})`); }
 // Back: Pump page with everything as entered; Store separately instead; same records, no duplicate stock
+{ const g = await B.evaluate(() => { const f = document.querySelector('.sheet-foot').getBoundingClientRect(); return innerHeight - f.bottom; });
+  check(g >= 0 && g < 130, `Back and Done sit at the bottom of the screen, above the toast (${Math.round(g)} px from the bottom)`); }
+await B.screenshot({ path: shots + '/9a-pump-saved-combined.png' });
 await B.click('[data-act="pumpback"]');
 check(await B.inputValue('[data-cin="1"]') === '5' && await B.inputValue('[data-pin="left.ml"]') === '80', 'Back reopens the Pump page with the entries kept');
 await B.click('[data-pstore="left"]');
@@ -260,7 +263,9 @@ await A.click('[data-act="pump"]'); await sleep(300); await A.click('[data-act="
 check(await A.isVisible('.act.pump:has-text("Finish pump")'), 'Closing the card unsaved leaves "Finish pump"');
 await A.click('[data-act="pump"]');
 check(await A.isVisible('[data-act="savepump"]'), 'Finish pump reopens the card');
-await A.click('[data-act="discardsession"]'); await A.click('[data-act="discardsession"]');
+await A.click('[data-act="discardsession"]');
+check(await A.isVisible('[data-act="discardsession"]:has-text("Tap again to discard")'), 'Cancel asks for a second tap before discarding');
+await A.click('[data-act="discardsession"]');
 check(await A.locator('.act.pump:not(.running)').waitFor({ timeout: 8000 }).then(() => true, () => false), 'Discard session clears it');
 // Bottle from stock: pick bags until the target is covered, timer, leftover, eaten
 await A.click('[data-act="feed"]'); await A.click('.bottle-btn');
